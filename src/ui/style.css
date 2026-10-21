@@ -1,0 +1,59 @@
+:root {
+  --bg: #f6f7f9; --surface: #fff; --text: #16181d; --muted: #5d6470; --line: #dde1e7;
+  --accent: #2563eb; --ok: #15803d; --caution: #b45309; --serious: #b91c1c; --info: #475569;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1115; --surface: #181b21; --text: #e7e9ee; --muted: #9aa3b2; --line: #2a2f38;
+    --accent: #60a5fa; --ok: #4ade80; --caution: #fbbf24; --serious: #f87171; --info: #94a3b8;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, sans-serif; }
+header { position: sticky; top: 0; background: var(--surface); border-bottom: 1px solid var(--line); padding: env(safe-area-inset-top) 16px 0; z-index: 1; }
+h1 { font-size: 18px; margin: 10px 0 6px; }
+h3 { font-size: 15px; margin: 0 0 8px; }
+main { padding: 12px 16px 48px; max-width: 760px; margin: 0 auto; }
+nav, .tabs { display: flex; gap: 4px; }
+.tab { border: 0; background: none; color: var(--muted); padding: 8px 12px; border-bottom: 2px solid transparent; font: inherit; }
+.tab.on { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+.tabs { border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+.muted { color: var(--muted); }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin: 12px 0; }
+button { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--text); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button:disabled { opacity: .55; }
+button.small { padding: 3px 10px; font-size: 13px; margin-left: 8px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.params { list-style: none; padding: 0; margin: 0; }
+.params li { padding: 10px 0; border-bottom: 1px solid var(--line); }
+.params label { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.params input { width: 18px; height: 18px; }
+.pname { font-weight: 600; }
+.levels { color: var(--muted); font-size: 13px; margin-left: auto; }
+.note { color: var(--muted); font-size: 13px; margin: 2px 0 0 26px; }
+.badge { font-size: 11px; padding: 1px 6px; border-radius: 999px; border: 1px solid currentColor; }
+.badge.auto { color: var(--ok); }
+.badge.manual { color: var(--caution); }
+.chargers { margin: 6px 0 0 26px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.chip { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--bg); border: 1px solid var(--line); }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; }
+.stat .v { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.stat .l { font-size: 12px; color: var(--muted); }
+.rec { font-weight: 600; margin: 10px 0 4px; }
+.rec.ok { color: var(--ok); } .rec.caution { color: var(--caution); } .rec.serious { color: var(--serious); }
+.downsides { padding-left: 0; list-style: none; margin: 8px 0; }
+.downsides li { padding: 6px 0 6px 10px; border-left: 3px solid var(--info); margin-bottom: 6px; font-size: 14px; }
+.downsides li b { text-transform: uppercase; font-size: 11px; margin-right: 6px; }
+.downsides li.caution { border-color: var(--caution); } .downsides li.caution b { color: var(--caution); }
+.downsides li.serious { border-color: var(--serious); } .downsides li.serious b { color: var(--serious); }
+.downsides li.info b { color: var(--info); }
+.num { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 6px 0; }
+.num input { width: 90px; font: inherit; padding: 4px 6px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; }
+.perms { list-style: none; padding: 0; margin: 0 0 8px; }
+.perms li { padding: 4px 0; }
+.ok { color: var(--ok); } .bad { color: var(--serious); }
+.error { color: var(--serious); }
+.kv { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
+.kv td { border-top: 1px solid var(--line); padding: 4px; vertical-align: top; overflow-wrap: anywhere; }
+.kv td:first-child { width: 42%; color: var(--muted); }

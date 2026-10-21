@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Battery Lab</string>
+    <string name="title_activity_main">Battery Lab</string>
+    <string name="package_name">com.priyansh.batterylab</string>
+    <string name="custom_url_scheme">com.priyansh.batterylab</string>
+</resources>

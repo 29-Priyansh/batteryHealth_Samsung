@@ -1,0 +1,27 @@
+{
+  "name": "battery-health-lab",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "test": "vitest run",
+    "sync": "npm run build && cap sync android",
+    "apk": "npm run sync && cd android && gradlew.bat assembleDebug",
+    "studio": "npm run sync && cap open android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.3",
+    "@capacitor/core": "^8.5.3",
+    "preact": "^11.0.1",
+    "uplot": "^1.6.32"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.3",
+    "@preact/preset-vite": "^2.10.6",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
+  }
+}

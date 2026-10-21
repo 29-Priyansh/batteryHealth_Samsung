@@ -1,0 +1,6 @@
+{
+  "appId": "com.priyansh.batterylab",
+  "appName": "Battery Lab",
+  "webDir": "dist",
+  "android": { "webContentsDebuggingEnabled": false }
+}
