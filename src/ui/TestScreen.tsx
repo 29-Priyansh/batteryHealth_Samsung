@@ -2,7 +2,7 @@ import { Capacitor } from '@capacitor/core';
 import { useEffect, useState } from 'preact/hooks';
 import { applicable, DEFAULT_SELECTION, getParam, type ParamDef, type TestType } from '../engine/params';
 import { BatteryLab, type CurrentState, type LiveEstimate } from '../native/batteryLab';
-import { ChipGroup, clockIn, formatElapsed, formatHours, Gauge, Icon, LevelPicker, Segmented, Sheet, toast } from './components';
+import { ChipGroup, clockIn, formatHours, Gauge, Icon, LevelPicker, Segmented, Sheet, toast } from './components';
 import { HistoryPage, SessionCard, type Act, type SessionItem } from './sessionsUi';
 import { onOpenRequest } from './time';
 import { SessionDetail } from './SessionDetail';
@@ -17,6 +17,20 @@ const SRC_BADGE: Record<string, [string, string]> = {
 };
 
 const RECENT = 5;
+
+/** Current time, updated on each minute boundary only: the elapsed time is shown in minutes. */
+function useMinuteClock(): number {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    let t = 0;
+    const schedule = () => {
+      t = window.setTimeout(() => { setNow(Date.now()); schedule(); }, 60_000 - (Date.now() % 60_000) + 50);
+    };
+    schedule();
+    return () => clearTimeout(t);
+  }, []);
+  return now;
+}
 
 export function TestScreen() {
   const [state, setState] = useState<CurrentState | null>(null);
@@ -35,8 +49,7 @@ export function TestScreen() {
     if (!Capacitor.isNativePlatform()) return;
     void refresh();
     const sub = BatteryLab.addListener('sampleAdded', () => void refresh());
-    // While visible, refresh the instant estimate once a minute (no background polling).
-    const timer = window.setInterval(() => { if (document.visibilityState === 'visible') void refresh(); }, 60_000);
+    // No polling: the screen refreshes when the recorder stores a sample and when the app comes back.
     const onVisible = () => { if (document.visibilityState === 'visible') void refresh(); };
     document.addEventListener('visibilitychange', onVisible);
     // Notification taps: "Log change" opens the sheet, a finished-test notification opens that test.
@@ -48,7 +61,6 @@ export function TestScreen() {
     return () => {
       offOpen();
       void sub.then((h) => h.remove());
-      clearInterval(timer);
       document.removeEventListener('visibilitychange', onVisible);
     };
   }, []);
@@ -101,13 +113,9 @@ function ActiveSession({ state, act, logRequested }: { state: CurrentState; act:
   const tracked: string[] = JSON.parse(String(s.tracked_params ?? '[]'));
   const manualParams = applicable(tracked, s.type).filter((p) => p.detection === 'manual');
   const paused = s.status === 'paused';
-  const [now, setNow] = useState(Date.now());
+  const now = useMinuteClock();
   const [sheet, setSheet] = useState<'log' | 'stop' | 'limit' | null>(null);
 
-  useEffect(() => {
-    const t = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, []);
   useEffect(() => { if (logRequested && manualParams.length > 0) setSheet('log'); }, [logRequested]);
 
   return (
@@ -115,8 +123,8 @@ function ActiveSession({ state, act, logRequested }: { state: CurrentState; act:
       <div class={`card live ${paused ? 'paused' : ''}`}>
         <div class="live-head">
           <span class={`tag ${s.type}`}><Icon name={s.type === 'charging' ? 'bolt' : 'drain'} size={14} /> {s.type}</span>
-          <span class={`dot ${paused ? '' : 'pulse'}`} />
-          <span class="muted">{paused ? 'Paused' : 'Recording'} · {formatElapsed(now - Number(s.start_wall))}</span>
+          <span class={`dot ${paused ? '' : 'live'}`} />
+          <span class="muted">{paused ? 'Paused' : 'Recording'} · {formatHours((now - Number(s.start_wall)) / 3.6e6)}</span>
         </div>
         <div class="range-row">
           <span>{s.type === 'charging' ? 'Charging' : 'Discharging'} <b>{state.battery?.level ?? '?'}% → {s.type === 'charging' ? s.target_level : s.lower_threshold}%</b></span>

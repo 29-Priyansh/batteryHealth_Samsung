@@ -102,6 +102,23 @@ The user wants to see the expected backup or charge time for the current configu
   - a timeline of setting changes with times, offset from the start, source (automatic or logged by you) and the uncertainty window.
 - **Calculations** live in `src/engine/summary.ts` (pure, tested). Sessions recorded by the M2 recorder all have this data.
 
+### R2.8 Overhead finding (2026-10-22, batterystats on the S24)
+- **Measured:** the app was charged 78 mAh (≈2%) in a session with about 32 min in the foreground:
+  - screen 39 mAh (display while the app was open);
+  - CPU 39 mAh, of which 21.6 in the foreground and 13.3 in the background service;
+  - 23 min 45 s of CPU time in 2 h 8 min of running.
+- **The recorder was not the cause:** 60 broadcasts, 83 rows, 0.58 s of handler CPU that day.
+- **Cause:** the WebView UI.
+  - Capacitor's default `KeepRunning=true` never pauses the WebView in the background, so JS timers (a 1 s elapsed-time ticker and a 60 s refresh) kept running.
+  - In the foreground, an infinite CSS animation (the pulsing "recording" dot) and a backdrop blur forced the WebView to render every frame at up to 120 Hz.
+- **Fixes:**
+  - `cordova.preferences.KeepRunning = false`, so the WebView and its timers pause when the app is not visible;
+  - no infinite animations;
+  - the elapsed time updates once per minute;
+  - no polling (refresh on stored samples and on return to the app);
+  - a solid tab bar instead of the blur.
+- **After the fix:** the service-only process used 0 CPU ticks over 90 s with the screen on. Foreground cost still to be measured.
+
 ### R2.4 Execution order (unchanged milestones, adjusted contents)
 - **M0 + M1 now:** project skeleton, local Kotlin plugin, a capability probe screen (it runs on the S24 once you connect it), and the parameter catalogue + selection/cost panel as pure TS with unit tests.
 - M2 onward as planned. The recorder reads every `auto` parameter.

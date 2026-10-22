@@ -2,5 +2,10 @@
   "appId": "com.priyansh.batterylab",
   "appName": "Battery Lab",
   "webDir": "dist",
-  "android": { "webContentsDebuggingEnabled": false }
+  "android": { "webContentsDebuggingEnabled": false },
+  "cordova": {
+    "preferences": {
+      "KeepRunning": "false"
+    }
+  }
 }

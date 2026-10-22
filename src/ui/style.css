@@ -35,7 +35,7 @@ b { font-weight: 600; }
   display: flex; align-items: center;
 }
 /* Reach mode moves the heading and content with transforms only (see reachability.ts). */
-.appbar h1 { transform-origin: center; white-space: nowrap; will-change: transform; }
+.appbar h1 { transform-origin: center; white-space: nowrap; }
 .appbar.reach-open h1, .detail-bar.reach-open h2 { cursor: pointer; }
 main {
   padding: calc(var(--safe-top) + var(--appbar-h) + 4px) 16px calc(96px + var(--safe-bottom));
@@ -46,8 +46,7 @@ main {
 .bottomnav {
   position: fixed; left: 16px; right: 16px; bottom: calc(16px + var(--safe-bottom)); z-index: 5;
   max-width: 280px; margin: 0 auto; display: flex; padding: 5px; border-radius: 999px;
-  background: color-mix(in srgb, var(--surface) 88%, transparent);
-  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  background: var(--surface); /* solid: a backdrop blur is recomputed on every scrolled frame */
   border: 1px solid var(--line); box-shadow: 0 8px 28px rgb(0 0 0 / .22);
   touch-action: none; user-select: none; -webkit-user-select: none;
 }
@@ -125,9 +124,8 @@ input.text, select, .num input {
 .tag.charging { background: color-mix(in srgb, var(--charging) 15%, transparent); color: var(--charging); }
 .tag.draining { background: color-mix(in srgb, var(--draining) 15%, transparent); color: var(--draining); }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
-.dot.pulse { background: var(--serious); animation: pulse 2s ease-in-out infinite; }
-@keyframes pulse { 50% { opacity: .25; } }
-@media (prefers-reduced-motion: reduce) { .dot.pulse { animation: none; } }
+/* Static on purpose: an endless animation makes the WebView render every frame (battery cost). */
+.dot.live { background: var(--serious); box-shadow: 0 0 0 3px color-mix(in srgb, var(--serious) 20%, transparent); }
 .estimate { margin: 14px 0 8px; }
 .estimate .big { font-size: 34px; font-weight: 800; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
 .stat-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 14px 0 6px; }
@@ -233,7 +231,7 @@ details summary { cursor: pointer; font-weight: 600; margin-top: 8px; }
   position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 8px;
   padding: var(--safe-top) 8px 0; height: calc(var(--safe-top) + var(--appbar-h)); background: var(--bg);
 }
-.detail-bar h2 { margin: 0; font-size: 20px; font-weight: 700; white-space: nowrap; transform-origin: center; will-change: transform; }
+.detail-bar h2 { margin: 0; font-size: 20px; font-weight: 700; white-space: nowrap; transform-origin: center; }
 /* Round icon button (back), arrow centred */
 .icon-btn {
   width: 40px; height: 40px; min-height: 40px; padding: 0; border-radius: 50%; flex: none;
