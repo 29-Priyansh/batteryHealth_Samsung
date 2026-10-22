@@ -2,7 +2,10 @@
 // computed values carry the estimator version so they can be recomputed later (§10).
 
 import { aggregate, sessionRates } from '../engine/compare';
-import { ESTIMATOR_VERSION, extractSteps } from '../engine/steps';
+import { computePriors } from '../engine/everyday';
+import { DEFAULT_SELECTION, type TestType } from '../engine/params';
+import { ESTIMATOR_VERSION, extractSteps, type SessionRows } from '../engine/steps';
+import { loadSetting, saveSetting } from './settingsStore';
 import { summarize, type RawRow } from '../engine/summary';
 import { BatteryLab, type SessionData } from '../native/batteryLab';
 import { toast } from './components';
@@ -19,6 +22,20 @@ export async function loadSessions(): Promise<SessionData[]> {
     cache.set(s.id, { samples: s.sample_count, data });
     return data;
   }));
+}
+
+export async function loadSelection(): Promise<Record<TestType, string[]>> {
+  return {
+    charging: await loadSetting('selection.charging', DEFAULT_SELECTION.slice()),
+    draining: await loadSetting('selection.draining', DEFAULT_SELECTION.slice()),
+  };
+}
+
+/** Recomputes each configuration's history and hands it to the recorder for the live estimate. */
+export async function updatePriors(data?: SessionData[]) {
+  const all = data ?? await loadSessions();
+  const priors = computePriors(all as unknown as SessionRows[], await loadSelection());
+  await saveSetting('priors', priors);
 }
 
 export function forgetSession(id: string) {

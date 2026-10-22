@@ -4,7 +4,7 @@ import { applicable, DEFAULT_SELECTION, getParam, type ParamDef, type TestType }
 import { BatteryLab, type CurrentState, type LiveEstimate } from '../native/batteryLab';
 import { ChipGroup, clockIn, formatHours, Gauge, Icon, LevelPicker, Segmented, Sheet, toast } from './components';
 import { HistoryPage, SessionCard, type Act, type SessionItem } from './sessionsUi';
-import { onOpenRequest } from './time';
+import { fmtTime, onOpenRequest } from './time';
 import { SessionDetail } from './SessionDetail';
 import { loadSetting, saveSetting } from './settingsStore';
 
@@ -93,11 +93,15 @@ export function TestScreen() {
         </div>
       </div>
 
-      {state.activeSession
+      {state.activeSession && state.activeSession.mode !== 'passive'
         ? <ActiveSession state={state} act={act} logRequested={logRequested} />
-        : <StartForm act={act} battery={b} />}
+        : <>
+            <EverydayCard state={state} act={act} />
+            <StartForm act={act} battery={b} />
+          </>}
 
-      <SessionList sessions={sessions} activeId={state.activeSession?.id} act={act} onChanged={() => void refresh()} />
+      <SessionList sessions={sessions.filter((x) => x.mode !== 'passive')} activeId={state.activeSession?.id} act={act}
+        onChanged={() => void refresh()} />
       {openSession && (
         <SessionDetail id={openSession} canDelete={openSession !== state.activeSession?.id} act={act}
           onClose={() => { setOpenSession(null); void refresh(); }} />
@@ -175,11 +179,16 @@ function ActiveSession({ state, act, logRequested }: { state: CurrentState; act:
 function LiveBlock({ live, type }: { live: LiveEstimate | null; type: TestType }) {
   const [info, setInfo] = useState(false);
   if (!live) return <div class="estimate"><div class="big">–</div></div>;
-  const wanted = type === 'charging' ? 1 : -1;
+  // Everyday recording follows whichever way the battery is going.
+  const wanted = live.passive ? (live.direction || 1) : type === 'charging' ? 1 : -1;
   if (live.direction !== wanted) {
-    return <div class="estimate"><div class="big muted">Not counted</div><div class="muted">{live.summary}</div></div>;
+    return <div class="estimate"><div class="big muted">{live.passive ? 'Idle' : 'Not counted'}</div><div class="muted">{live.summary}</div></div>;
   }
-  const quality = live.ratePerHour == null ? 'measuring' : live.measured ? `measured · ${live.steps} steps` : `early · ${live.steps} step${live.steps === 1 ? '' : 's'}`;
+  type = wanted > 0 ? 'charging' : 'draining';
+  const quality = live.ratePerHour == null ? 'measuring'
+    : live.steps >= 3 ? `measured · ${live.steps} steps`
+    : live.historyRate != null ? 'from your history'
+    : `early · ${live.steps} step${live.steps === 1 ? '' : 's'}`;
   return (
     <div class="estimate">
       <div class="big-row">
@@ -196,7 +205,8 @@ function LiveBlock({ live, type }: { live: LiveEstimate | null; type: TestType }
       <button class="link small" onClick={() => setInfo(!info)} aria-expanded={info}>ⓘ How these are estimated</button>
       {info && (
         <p class="muted small">"Rate" comes from completed 1% steps in the current configuration; "Instant" comes from the current
-          draw right now and swings with use. Both assume nothing changes. Results across tests are on the Results tab.</p>
+          draw right now and swings with use. Both assume nothing changes. When this configuration has history, "Rate" starts
+          from it{live.historyRate != null ? ` (${live.historyRate.toFixed(1)} %/h)` : ''} and shifts toward the current run as it collects 1% steps.</p>
       )}
     </div>
   );
@@ -283,6 +293,42 @@ function StopSheet({ manualParams, act, onClose }: { manualParams: ParamDef[]; a
         </div>
       )}
     </Sheet>
+  );
+}
+
+// ---------------------------------------------------------------- always-on
+
+function EverydayCard({ state, act }: { state: CurrentState; act: Act }) {
+  const s = state.activeSession;
+  const running = s?.mode === 'passive';
+  const toggle = () => act(() => BatteryLab.setAlwaysOn({ enabled: !state.alwaysOn }),
+    state.alwaysOn ? 'Always-on recording off' : 'Always-on recording on');
+  return (
+    <div class={`card everyday ${running ? 'live' : ''}`}>
+      <div class="switch-row">
+        <div>
+          <h3>Always-on</h3>
+          <div class="muted small">Records everyday use between tests and learns each configuration's rate.</div>
+        </div>
+        <button role="switch" aria-checked={state.alwaysOn} class={`switch ${state.alwaysOn ? 'on' : ''}`} onClick={toggle}
+          aria-label="Always-on recording"><span /></button>
+      </div>
+      {running && s && (
+        <>
+          <div class="live-head">
+            <span class="dot live" />
+            <span class="muted small">Recording today since {fmtTime(Number(s.start_wall))}</span>
+          </div>
+          <LiveBlock live={state.live} type="draining" />
+          {state.live?.config && <p class="muted small">Grouped by: {state.live.config || 'automatic settings'}</p>}
+        </>
+      )}
+      {state.alwaysOn && !running && <p class="muted small">Resumes when no test is running.</p>}
+      {!state.alwaysOn && (
+        <p class="muted small">Only settings the app reads itself are used here; screen-off and screen-on use are kept apart in Results.
+          A quiet notification stays while it runs.</p>
+      )}
+    </div>
   );
 }
 

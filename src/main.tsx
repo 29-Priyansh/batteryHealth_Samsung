@@ -9,6 +9,7 @@ import { handleBack } from './ui/backStack';
 import { closeReach, installReach, type ReachController } from './ui/reachability';
 import { TestScreen } from './ui/TestScreen';
 import { BatteryLab } from './native/batteryLab';
+import { updatePriors } from './ui/data';
 import { Capacitor } from '@capacitor/core';
 import { parseOpen, requestOpen, setHour12 } from './ui/time';
 import './ui/style.css';
@@ -43,6 +44,8 @@ function App() {
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
     void BatteryLab.getDeviceInfo().then((i) => setHour12(i.is24Hour));
+    // Refresh each configuration's history for the live estimate, after the first screen has drawn.
+    const priorsTimer = window.setTimeout(() => { void updatePriors().catch(() => undefined); }, 3000);
     const open = (action: string | null) => {
       const r = parseOpen(action);
       if (!r) return;
@@ -51,7 +54,7 @@ function App() {
     };
     void BatteryLab.getLaunchAction().then((r) => open(r.action));
     const sub = BatteryLab.addListener('openRequest', (e) => open(e.action));
-    return () => { void sub.then((h) => h.remove()); };
+    return () => { clearTimeout(priorsTimer); void sub.then((h) => h.remove()); };
   }, []);
 
   // Android back: close the top layer, then the reach space, then go to the Test tab, then leave.

@@ -2,10 +2,11 @@ import { Capacitor } from '@capacitor/core';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { aggregate, compare, predict, type Comparison, type ConfigStats } from '../engine/compare';
 import { DEFAULT_SELECTION, enumerateConfigs, displayCode, getParam, type TestType } from '../engine/params';
-import { extractSteps, type SessionSteps } from '../engine/steps';
+import { everydayStats, everydaySteps, isEveryday, type EverydayStats } from '../engine/everyday';
+import { extractSteps, type SessionRows, type SessionSteps } from '../engine/steps';
 import type { SessionData } from '../native/batteryLab';
 import { formatHours, Segmented, toast } from './components';
-import { exportJson, loadSessions, samplesCsv, saveExport, stamp } from './data';
+import { exportJson, loadSessions, samplesCsv, saveExport, stamp, updatePriors } from './data';
 import { loadSetting } from './settingsStore';
 
 /** Ranges used for the headline prediction of each configuration. */
@@ -13,6 +14,7 @@ const PREDICT: Record<TestType, [number, number]> = { draining: [100, 20], charg
 
 export function ResultsScreen() {
   const [type, setType] = useState<TestType>('draining');
+  const [source, setSource] = useState<'tests' | 'everyday'>('tests');
   const [data, setData] = useState<SessionData[] | null>(null);
   const [selection, setSelection] = useState<Record<TestType, string[]> | null>(null);
   const [picked, setPicked] = useState<string[]>([]);
@@ -24,18 +26,26 @@ export function ResultsScreen() {
         charging: await loadSetting('selection.charging', DEFAULT_SELECTION.slice()),
         draining: await loadSetting('selection.draining', DEFAULT_SELECTION.slice()),
       });
-      try { setData(await loadSessions()); } catch (e) { toast(String(e)); setData([]); }
+      try {
+        const all = await loadSessions();
+        setData(all);
+        void updatePriors(all); // keep the live estimate's history current
+      } catch (e) { toast(String(e)); setData([]); }
     })();
   }, []);
 
   const steps: SessionSteps[] = useMemo(() => {
     if (!data || !selection) return [];
     return data
-      .filter((d) => d.session.type === type)
-      .map((d) => extractSteps(d as unknown as Parameters<typeof extractSteps>[0], selection[type]));
+      .filter((d) => d.session.type === type && !isEveryday(d))
+      .map((d) => extractSteps(d as unknown as SessionRows, selection[type]));
   }, [data, selection, type]);
   const stats = useMemo(() => aggregate(steps), [steps]);
-  useEffect(() => setPicked([]), [type]);
+  const everyday = useMemo(
+    () => (data && selection ? everydayStats(everydaySteps(data as unknown as SessionRows[], selection[type], type)) : []),
+    [data, selection, type],
+  );
+  useEffect(() => setPicked([]), [type, source]);
 
   if (!Capacitor.isNativePlatform()) return <p class="muted center">Results are computed on the phone.</p>;
   if (!data || !selection) return <p class="muted center">Calculating…</p>;
@@ -56,8 +66,12 @@ export function ResultsScreen() {
 
   return (
     <section>
+      <Segmented options={['tests', 'everyday'] as const} value={source} onChange={setSource}
+        label={(v) => (v === 'tests' ? 'From tests' : 'Everyday use')} />
       <Segmented options={['draining', 'charging'] as const} value={type} onChange={setType}
         label={(t) => (t === 'charging' ? 'Charging' : 'Draining')} />
+
+      {source === 'everyday' ? <EverydayResults type={type} stats={everyday} selection={selection[type]} /> : <>
 
       <p class="muted small">
         {steps.length} {type} test{steps.length === 1 ? '' : 's'} · {usable.length} of {allConfigs.length} configurations measured.
@@ -87,6 +101,8 @@ export function ResultsScreen() {
         </p>
       )}
 
+      </>}
+
       <div class="card">
         <h3>Export</h3>
         <p class="muted small">All tests: raw observations (CSV) or raw data with computed results (JSON, estimator v1).</p>
@@ -96,6 +112,73 @@ export function ResultsScreen() {
         </div>
       </div>
     </section>
+  );
+}
+
+/**
+ * Everyday results: per configuration (automatic settings only), screen-off and screen-on
+ * rates separately. Comparisons use screen-off steps only; screen-on is "typical for your use".
+ */
+function EverydayResults({ type, stats, selection }: { type: TestType; stats: EverydayStats[]; selection: string[] }) {
+  const [picked, setPicked] = useState<string[]>([]);
+  const allConfigs = enumerateConfigs(selection.filter((k) => { try { return getParam(k).detection === 'auto'; } catch { return false; } }), type);
+  const usable = stats.filter((s) => s.all.sessions.length > 0);
+  const pick = (c: string) => setPicked((p) => (p.includes(c) ? p.filter((x) => x !== c) : [...p, c].slice(-2)));
+  const pair = picked.length === 2 ? picked.map((c) => stats.find((s) => s.config === c)!) : null;
+  const [from, to] = PREDICT[type];
+
+  if (usable.length === 0) {
+    return (
+      <div class="card">
+        <p>No everyday data yet. Turn on <b>Always-on</b> on the Test tab; results build up from days of normal use
+          (last 30 days count).</p>
+      </div>
+    );
+  }
+  return (
+    <>
+      <p class="muted small">From normal use over the last 30 days, grouped by settings the app reads itself. Each day counts once.
+        {type === 'draining' && ' Screen-off is the fair comparison; screen-on depends mostly on what you do.'}</p>
+      <ul class="results">
+        {usable.map((st) => {
+          const off = st.off?.median;
+          const on = st.on?.median;
+          const idle = st.off ? predict(st.off, from, to) : null;
+          return (
+            <li class={`card config-card tappable ${picked.includes(st.config) ? 'picked' : ''}`} role="button" onClick={() => pick(st.config)}>
+              <div class="cc-head">
+                <span class="cc-code">{displayCode(st.config, allConfigs)}</span>
+                <span class="cc-name">{describeConfig(st.config)}</span>
+              </div>
+              {type === 'draining' ? (
+                <div class="stat-row two">
+                  <div><span class="muted small">Screen off</span><b>{off != null ? `${off.toFixed(1)} %/h` : '–'}</b></div>
+                  <div><span class="muted small">Screen on (your use)</span><b>{on != null ? `${on.toFixed(1)} %/h` : '–'}</b></div>
+                </div>
+              ) : (
+                <div class="cc-stats"><div><b>{st.all.median!.toFixed(1)}</b><span class="muted small"> %/h median</span></div></div>
+              )}
+              <div class="muted small">{st.days} day{st.days === 1 ? '' : 's'}</div>
+              {type === 'draining' && idle && (
+                <div class="cc-predict">Idle {from}% → {to}% ≈ <b>{formatHours(idle.hours)}</b>
+                  <span class="muted small"> predicted{idle.extrapolated ? ', partly extrapolated' : ''}</span></div>
+              )}
+              {type === 'charging' && (() => {
+                const p = predict(st.all, from, to);
+                return p && <div class="cc-predict">{from}% → {to}% ≈ <b>{formatHours(p.hours)}</b></div>;
+              })()}
+            </li>
+          );
+        })}
+      </ul>
+      {pair && pair[0] && pair[1] && (() => {
+        const a = type === 'draining' ? pair[0].off : pair[0].all;
+        const b = type === 'draining' ? pair[1].off : pair[1].all;
+        if (!a || !b) return <div class="card"><p class="muted">One of these has no {type === 'draining' ? 'screen-off ' : ''}data yet.</p></div>;
+        return <ComparisonCard type={type} a={a} b={b} allConfigs={allConfigs}
+          note={type === 'draining' ? 'Compared on screen-off (idle) drain only; days count as tests.' : 'Days count as tests.'} />;
+      })()}
+    </>
   );
 }
 
@@ -150,7 +233,7 @@ const VERDICT_TITLE: Record<Comparison['verdict'], string> = {
   clear: 'Clear difference',
 };
 
-function ComparisonCard({ type, a, b, allConfigs }: { type: TestType; a: ConfigStats; b: ConfigStats; allConfigs: string[] }) {
+function ComparisonCard({ type, a, b, allConfigs, note }: { type: TestType; a: ConfigStats; b: ConfigStats; allConfigs: string[]; note?: string }) {
   const c = compare(type, a, b);
   const nameA = displayCode(a.config, allConfigs);
   const nameB = displayCode(b.config, allConfigs);
@@ -172,6 +255,7 @@ function ComparisonCard({ type, a, b, allConfigs }: { type: TestType; a: ConfigS
         <p class="muted small">Compared over the same battery ranges: {c.matchedBands.sort((x, y) => y - x).map((k) => `${k * 10}–${k * 10 + 10}%`).join(', ')}.</p>
       )}
       {c.reasons.length > 0 && <ul class="reasons">{c.reasons.map((r) => <li>{r}</li>)}</ul>}
+      {note && <p class="muted small">{note}</p>}
     </div>
   );
 }

@@ -33,8 +33,10 @@ function direction(s: RawRow): number {
   return 0;
 }
 
-export function summarize(session: RawRow, samples: RawRow[], events: RawRow[], now = Date.now()): SessionSummary {
-  const type = session.type as 'charging' | 'draining';
+export function summarize(
+  session: RawRow, samples: RawRow[], events: RawRow[], now = Date.now(),
+  type: 'charging' | 'draining' = session.type as 'charging' | 'draining',
+): SessionSummary {
   const wanted = type === 'charging' ? 1 : -1;
   const ordered = [...samples].sort((a, b) => Number(a.id) - Number(b.id));
   const gapStarts = new Set(

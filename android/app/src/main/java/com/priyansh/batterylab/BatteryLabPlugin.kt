@@ -56,7 +56,7 @@ class BatteryLabPlugin : Plugin() {
         Recorder.init(context)
         Recorder.listeners.add(sampleListener)
         // If a session survived a process death without the service restarting, resume monitoring now.
-        Recorder.post { if (Recorder.hasActiveSession()) MonitorService.start(context) }
+        Recorder.post { if (Recorder.hasActiveSession() || Recorder.startPassiveIfEnabled()) MonitorService.start(context) }
     }
 
     override fun handleOnPause() {
@@ -144,6 +144,7 @@ class BatteryLabPlugin : Plugin() {
             put("activeSession", active?.let { Recorder.sessionJson(it) } ?: JSONObject.NULL)
             put("activeValues", if (active != null) Recorder.currentValuesJson() else JSONObject.NULL)
             put("live", Recorder.liveJson() ?: JSONObject.NULL)
+            put("alwaysOn", Recorder.alwaysOnEnabled())
             put("counts", active?.let {
                 db.queryOne(
                     "SELECT (SELECT COUNT(*) FROM sample WHERE session_id = ?1) AS samples, " +
@@ -171,6 +172,12 @@ class BatteryLabPlugin : Plugin() {
 
     @PluginMethod
     fun pauseSession(call: PluginCall) = onRecorder(call) { Recorder.pause() }
+
+    @PluginMethod
+    fun setAlwaysOn(call: PluginCall) {
+        val enabled = call.getBoolean("enabled") ?: return call.reject("enabled required")
+        onRecorder(call) { Recorder.setAlwaysOn(enabled) }
+    }
 
     @PluginMethod
     fun setLimit(call: PluginCall) {
@@ -380,6 +387,7 @@ class BatteryLabPlugin : Plugin() {
         val value = call.getString("value") ?: return call.reject("value required")
         io.execute {
             db.setSetting(key, value)
+            if (key == Recorder.SETTING_PRIORS || key.startsWith("alwaysOn.")) Recorder.invalidatePriors()
             call.resolve()
         }
     }

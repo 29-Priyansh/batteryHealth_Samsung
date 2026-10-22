@@ -3,7 +3,7 @@ import {
   analyzeSelection, DEFAULT_ASSUMPTIONS, DEFAULT_SELECTION, PARAMS, type CostAssumptions, type TestType,
 } from '../engine/params';
 import { AdvancedPage } from './AdvancedPage';
-import { Icon, Segmented, toast } from './components';
+import { Icon, LevelPicker, Segmented, toast } from './components';
 import { loadSetting, saveSetting } from './settingsStore';
 
 const TYPES: TestType[] = ['charging', 'draining'];
@@ -118,12 +118,35 @@ export function ParametersScreen() {
         <button onClick={() => setSelection((s) => ({ ...s, [type]: [...DEFAULT_SELECTION] }))}>Reset to default</button>
       </div>
 
+      <AlwaysOnTargets />
+
       <button class="card row-link" onClick={() => setAdvanced(true)}>
         <span><b>Advanced</b><span class="muted small"> · diagnostics, permissions, app overhead</span></span>
         <span class="chevron" aria-hidden="true">›</span>
       </button>
       {advanced && <AdvancedPage onClose={() => setAdvanced(false)} />}
     </section>
+  );
+}
+
+/** Where the always-on live estimate counts to. */
+function AlwaysOnTargets() {
+  const [reserve, setReserve] = useState(20);
+  const [chargeTarget, setChargeTarget] = useState(100);
+  useEffect(() => {
+    void loadSetting('alwaysOn.reserve', 20).then(setReserve);
+    void loadSetting('alwaysOn.chargeTarget', 100).then(setChargeTarget);
+  }, []);
+  return (
+    <div class="card">
+      <h3>Always-on estimate</h3>
+      <p class="muted small">The everyday estimate counts down to this level when on battery…</p>
+      <LevelPicker presets={[10, 15, 20, 30]} value={reserve} min={1} max={99}
+        onChange={(v) => { setReserve(v); void saveSetting('alwaysOn.reserve', v); }} />
+      <p class="muted small">…and up to this level when charging.</p>
+      <LevelPicker presets={[80, 85, 90, 100]} value={chargeTarget} min={2} max={100}
+        onChange={(v) => { setChargeTarget(v); void saveSetting('alwaysOn.chargeTarget', v); }} />
+    </div>
   );
 }
 

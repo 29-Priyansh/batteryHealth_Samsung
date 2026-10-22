@@ -28,6 +28,8 @@ export interface SessionRow extends Row {
   type: 'charging' | 'draining';
   status: string;
   start_wall: number;
+  /** 'test' = started by the user; 'passive' = always-on everyday recording (one per day). */
+  mode: 'test' | 'passive';
 }
 
 export interface CurrentState {
@@ -38,6 +40,7 @@ export interface CurrentState {
   activeValues: Record<string, { value: string | null; src: string }> | null;
   counts: { samples: number; events: number; changes: number } | null;
   live: LiveEstimate | null;
+  alwaysOn: boolean;
 }
 
 /** Live indicator for the active session (display only; results come from src/engine). */
@@ -46,7 +49,13 @@ export interface LiveEstimate {
   /** +1 charging, -1 discharging, 0 neither. */
   direction: number;
   steps: number;
+  /** Blended rate: this configuration's history plus the current run. */
   ratePerHour: number | null;
+  /** The current run alone. */
+  runRatePerHour: number | null;
+  historyRate: number | null;
+  historySteps: number;
+  passive: boolean;
   hoursToLimit: number | null;
   measured: boolean;
   instantMa: number | null;
@@ -89,6 +98,8 @@ export interface BatteryLabPlugin {
   getCurrentState(): Promise<CurrentState>;
   startSession(options: StartSessionOptions): Promise<SessionRow>;
   pauseSession(): Promise<SessionRow>;
+  /** Always-on everyday recording between tests. */
+  setAlwaysOn(options: { enabled: boolean }): Promise<{ enabled: boolean }>;
   /** Change where the active session stops: charging target or draining lower level. */
   setLimit(options: { value: number }): Promise<SessionRow>;
   resumeSession(): Promise<SessionRow>;

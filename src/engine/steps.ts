@@ -66,8 +66,11 @@ export function configKeysByState(rows: SessionRows, selection: readonly string[
   return out;
 }
 
-export function extractSteps(rows: SessionRows, selection: readonly string[]): SessionSteps {
-  const type = rows.session.type as TestType;
+/**
+ * [type] defaults to the session's own type; everyday (always-on) sessions record both
+ * directions, so they are extracted once as 'draining' and once as 'charging'.
+ */
+export function extractSteps(rows: SessionRows, selection: readonly string[], type: TestType = rows.session.type as TestType): SessionSteps {
   const wanted = type === 'charging' ? 1 : -1;
   const keys = configKeysByState(rows, selection, type);
   const excluded: Record<string, number> = {};

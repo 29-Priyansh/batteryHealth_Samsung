@@ -131,6 +131,8 @@ class LabDatabase private constructor(context: Context) :
                 "CREATE INDEX config_change_session ON config_change (session_id, event_elapsed)",
                 "CREATE INDEX session_type_start ON session (type, start_wall)",
             ),
+            // v3: always-on recording. 'test' = user-started test; 'passive' = everyday recording, one per day.
+            listOf("ALTER TABLE session ADD COLUMN mode TEXT NOT NULL DEFAULT 'test'"),
         )
 
         @Volatile private var instance: LabDatabase? = null

@@ -119,6 +119,22 @@ The user wants to see the expected backup or charge time for the current configu
   - a solid tab bar instead of the blur.
 - **After the fix:** the service-only process used 0 CPU ticks over 90 s with the screen on. Foreground cost still to be measured.
 
+### R2.9 Always-on (everyday) recording (user request)
+The user proposed recording all the time, splitting by configuration as settings change, and letting each configuration's average improve itself. Adopted as a mode alongside deliberate tests, with these safeguards:
+- **Recording:** sessions get a `mode` column (schema v3). With Always-on enabled and no test running, the recorder keeps a `passive` session open:
+  - it rolls over at local midnight, so **one day is one sample**;
+  - a deliberate test supersedes it, and it resumes when the test ends;
+  - no limits and no finish notifications.
+- **Configurations** use **automatically read settings only**. Manual ones (network mode, performance profile) would go stale silently in a never-ending recording.
+- **Rates** are split by screen state:
+  - **screen-off (idle)** is the controlled part and the only one used in everyday comparisons;
+  - **screen-on** is shown as "typical for your use".
+- **Window:** only the last 30 days count, because ageing, updates and seasons shift rates. Everyday results are shown separately from test results and never pooled with them.
+- **Live estimate** (tests and always-on) = this configuration's history blended with the current run, weighted by steps:
+  - history counts as at most 8 steps, so the run takes over as it collects evidence;
+  - the UI's engine computes the history (median rate per configuration, last 30 days, tests and everyday, keyed by automatic settings) and stores it as the `priors` setting for the recorder.
+- **Always-on estimate limits:** the "reserve" level when on battery (default 20%) and the charge target (default 100%), set in Setup.
+
 ### R2.4 Execution order (unchanged milestones, adjusted contents)
 - **M0 + M1 now:** project skeleton, local Kotlin plugin, a capability probe screen (it runs on the S24 once you connect it), and the parameter catalogue + selection/cost panel as pure TS with unit tests.
 - M2 onward as planned. The recorder reads every `auto` parameter.

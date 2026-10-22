@@ -56,6 +56,19 @@ class LiveEstimator {
 
     companion object {
         const val MIN_STEPS_MEASURED = 3
+        /** History counts as at most this many steps, so a fresh run takes over once it has evidence. */
+        const val PRIOR_WEIGHT_CAP = 8
+
+        /**
+         * Blends this configuration's history (rate over [priorSteps] steps) with the current run's
+         * rate over [liveSteps] steps, weighted by steps. Either side may be missing.
+         */
+        fun blend(priorRate: Double?, priorSteps: Int, liveRate: Double?, liveSteps: Int): Double? {
+            val wp = if (priorRate != null && priorRate > 0) priorSteps.coerceIn(0, PRIOR_WEIGHT_CAP).toDouble() else 0.0
+            val wl = if (liveRate != null && liveRate > 0) liveSteps.toDouble() else 0.0
+            if (wp + wl == 0.0) return null
+            return ((priorRate ?: 0.0) * wp + (liveRate ?: 0.0) * wl) / (wp + wl)
+        }
 
         /**
          * Instant estimate from current draw and charge counter. Samsung reports current in mA (R2.5);

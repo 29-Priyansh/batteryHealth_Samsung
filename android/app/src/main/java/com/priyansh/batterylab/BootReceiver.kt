@@ -12,7 +12,7 @@ class BootReceiver : BroadcastReceiver() {
         val pending = goAsync()
         Recorder.post {
             try {
-                if (Recorder.hasActiveSession()) MonitorService.start(context)
+                if (Recorder.hasActiveSession() || Recorder.startPassiveIfEnabled()) MonitorService.start(context)
             } finally {
                 pending.finish()
             }

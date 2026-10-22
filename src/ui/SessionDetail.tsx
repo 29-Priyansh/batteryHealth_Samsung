@@ -22,6 +22,8 @@ const SRC: Record<string, [string, string]> = {
 const END_REASON: Record<string, string> = {
   target_reached: 'Reached the target',
   held_at_limit: 'Stopped charging below the target (battery protection)',
+  rolled: 'Day finished (everyday recording continues in a new day)',
+  superseded: 'Paused while a test ran',
   threshold_reached: 'Reached the discharge level',
   stopped: 'Stopped by you',
   active: 'Still recording',
@@ -103,6 +105,7 @@ export function SessionDetail({ id, canDelete, act, onClose }: {
 
 function Detail({ data }: { data: SessionData }) {
   const s = data.session;
+  if (s.mode === 'passive') return <EverydayDetail data={data} />;
   const summary = summarize(s, data.samples, data.events);
   const start = startingValues(data.configStates, data.paramValues);
   const tracked: string[] = JSON.parse(String(s.tracked_params ?? '[]'));
@@ -162,6 +165,46 @@ function Detail({ data }: { data: SessionData }) {
         <h3 class="section-h">Setting changes</h3>
         {changes.length === 0
           ? <p class="muted small">No settings changed during this test.</p>
+          : <ol class="timeline">{changes.filter((c) => known(c.param)).map((c) => <ChangeItem c={c} start={Number(s.start_wall)} />)}</ol>}
+      </div>
+    </>
+  );
+}
+
+/** One always-on day: discharging and charging are summarised separately, never as one number. */
+function EverydayDetail({ data }: { data: SessionData }) {
+  const s = data.session;
+  const drain = summarize(s, data.samples, data.events, Date.now(), 'draining');
+  const charge = summarize(s, data.samples, data.events, Date.now(), 'charging');
+  const levels = data.samples.map((x) => Number(x.level));
+  const changes = changeLog(data.configChanges);
+  const known = (k: string) => { try { getParam(k); return true; } catch { return false; } };
+  return (
+    <>
+      <div class="card summary">
+        <div class="live-head">
+          <span class="tag everyday"><Icon name="results" size={14} /> everyday</span>
+          <span class="muted small">{fmtDateTime(Number(s.start_wall))}</span>
+        </div>
+        <div class="headline">
+          <div class="big">{formatHours(drain.totalMs / 3.6e6)}</div>
+          <div>Recorded, battery between <b>{Math.min(...levels)}%</b> and <b>{Math.max(...levels)}%</b></div>
+        </div>
+        <div class="muted small">{END_REASON[String(s.status)] ?? String(s.status).replace('_', ' ')}</div>
+        <div class="stat-row two">
+          <div><span class="muted small">On battery</span><b>{formatHours(drain.activeMs / 3.6e6)}</b></div>
+          <div><span class="muted small">Charging</span><b>{formatHours(charge.activeMs / 3.6e6)}</b></div>
+        </div>
+        <p class="muted small">Rates per configuration, split by screen on and off, are on the Results tab under "Everyday".</p>
+      </div>
+      <div class="card">
+        <h3 class="section-h">Battery level</h3>
+        <LevelChart session={{ ...s, type: 'draining' }} samples={data.samples} changes={data.configChanges} />
+      </div>
+      <div class="card">
+        <h3 class="section-h">Setting changes</h3>
+        {changes.length === 0
+          ? <p class="muted small">No settings changed.</p>
           : <ol class="timeline">{changes.filter((c) => known(c.param)).map((c) => <ChangeItem c={c} start={Number(s.start_wall)} />)}</ol>}
       </div>
     </>

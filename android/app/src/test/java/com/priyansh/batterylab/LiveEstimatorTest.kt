@@ -59,6 +59,16 @@ class LiveEstimatorTest {
         assertEquals(28 / 60.0, e.hoursTo(52, 80)!!, 1e-9)
     }
 
+    @Test fun blendLeansOnHistoryEarlyAndOnTheRunLater() {
+        // History 10 %/h over 40 steps (capped to 8); run at 6 %/h.
+        assertEquals(10.0, LiveEstimator.blend(10.0, 40, null, 0)!!, 1e-9)
+        assertEquals((10.0 * 8 + 6.0 * 2) / 10, LiveEstimator.blend(10.0, 40, 6.0, 2)!!, 1e-9)
+        assertEquals((10.0 * 8 + 6.0 * 24) / 32, LiveEstimator.blend(10.0, 40, 6.0, 24)!!, 1e-9)
+        assertEquals(6.0, LiveEstimator.blend(null, 0, 6.0, 3)!!, 1e-9)
+        assertNull(LiveEstimator.blend(null, 0, null, 0))
+        assertEquals(10.0, LiveEstimator.blend(10.0, 3, 6.0, 0)!!, 1e-9)
+    }
+
     @Test fun instantEstimateFromCurrentDraw() {
         // Probe values: 2 250 400 µAh at 57%, -182 mA → ~3948 mAh capacity; 37 points to 20% ≈ 1461 mAh ≈ 8.0 h.
         val (ma, hours) = LiveEstimator.instantHours(2_250_400, -182, 57, 20, -1)!!

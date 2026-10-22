@@ -35,6 +35,10 @@ object Recorder {
     /** Plugged in but not charging this long during a charging test = held by battery protection. */
     private const val HELD_LIMIT_MS = 15 * 60_000L
     private const val RESULTS_CHANNEL = "results"
+    const val SETTING_ALWAYS_ON = "alwaysOn.enabled"
+    const val SETTING_RESERVE = "alwaysOn.reserve"
+    const val SETTING_CHARGE_TARGET = "alwaysOn.chargeTarget"
+    const val SETTING_PRIORS = "priors"
 
     private val exec = Executors.newSingleThreadExecutor()
     private lateinit var app: Context
@@ -49,7 +53,11 @@ object Recorder {
         val startWall: Long,
         val tracked: List<String>,
         var status: String,
-    )
+        /** "test" (started by the user) or "passive" (always-on everyday recording). */
+        val mode: String = "test",
+    ) {
+        val passive get() = mode == "passive"
+    }
 
     private data class Value(val value: String?, val src: String)
 
@@ -67,6 +75,7 @@ object Recorder {
     private var statCpuNs = 0L
     private val live = LiveEstimator()
     private var heldSinceElapsed: Long? = null
+    private var priorsCache: JSONObject? = null
 
     /** Elapsed time the UI last went to the background; bounds manual-change windows. */
     @Volatile var uiPausedElapsed: Long = 0L
@@ -100,7 +109,10 @@ object Recorder {
         type: String, target: Int?, threshold: Int?, manual: Map<String, String?>,
         tracked: List<String>, conditions: String?, notes: String?,
     ): JSObject {
-        check(!hasActiveSession()) { "A session is already active" }
+        if (hasActiveSession()) {
+            check(active?.passive == true) { "A test is already running" }
+            stop("superseded") // a deliberate test replaces everyday recording until it ends
+        }
         val t = now()
         val battery = readBattery() ?: error("Battery status unavailable")
         // The limit must lie ahead of the current level, otherwise the session would end on its first sample.
@@ -112,6 +124,36 @@ object Recorder {
                 "Discharge level must be between 1% and ${battery.level - 1}%"
             }
         }
+        return open(type, "test", target, threshold, manual, tracked, conditions, notes, t, battery)
+    }
+
+    /** Starts everyday recording if it is enabled and nothing else is running. */
+    fun startPassiveIfEnabled(): Boolean {
+        if (active != null || restore() || !alwaysOnEnabled()) return active != null
+        val battery = readBattery() ?: return false
+        open("draining", "passive", null, null, emptyMap(), AutoParams.KEYS, null, null, now(), battery)
+        return true
+    }
+
+    fun setAlwaysOn(enabled: Boolean): JSObject {
+        db.setSetting(SETTING_ALWAYS_ON, enabled.toString())
+        if (enabled) {
+            if (startPassiveIfEnabled()) service ?: MonitorService.start(app)
+        } else if (active?.passive == true) {
+            stop("stopped")
+        }
+        return JSObject().put("enabled", enabled)
+    }
+
+    fun alwaysOnEnabled(): Boolean = db.getSetting(SETTING_ALWAYS_ON) == "true"
+
+    /** Called after the UI stores new history rates for the live estimate. */
+    fun invalidatePriors() = post { priorsCache = null }
+
+    private fun open(
+        type: String, mode: String, target: Int?, threshold: Int?, manual: Map<String, String?>,
+        tracked: List<String>, conditions: String?, notes: String?, t: Clock, battery: BatteryReading,
+    ): JSObject {
         val id = UUID.randomUUID().toString()
         val initial = AutoParams.read(app).mapValues { (_, v) -> Value(v, if (v == null) "unknown" else "verified") } +
             manual.mapValues { (_, v) -> Value(v, if (v == null) "unknown" else "user_confirmed") }
@@ -122,12 +164,12 @@ object Recorder {
                 put("start_wall", t.wall); put("start_elapsed", t.elapsed); put("start_boot", t.boot)
                 put("start_level", battery.level); put("target_level", target); put("lower_threshold", threshold)
                 put("tracked_params", JSONArray(tracked).toString()); put("conditions", conditions); put("notes", notes)
-                put("build_snapshot_id", buildId); put("app_version", appVersion())
+                put("build_snapshot_id", buildId); put("app_version", appVersion()); put("mode", mode)
             })
             stateId = insertState(d, id, t, initial)
             insertEvent(d, id, t, "start", null)
         }
-        active = Active(id, type, target, threshold, t.wall, tracked, "active")
+        active = Active(id, type, target, threshold, t.wall, tracked, "active", mode)
         live.reset()
         values = initial
         screenOn = app.getSystemService(PowerManager::class.java).isInteractive
@@ -195,10 +237,14 @@ object Recorder {
         lastPersisted = null
         lastPersistClock = null
         heldSinceElapsed = null
-        service?.stopMonitoring()
         val row = sessionJson(s.id)
-        // Stops the user did not ask for get a short result notification; a manual stop happens in the app.
-        if (finalStatus != "stopped") notifyFinished(row)
+        // Tests that end on their own get a short result notification; a manual stop happens in the app.
+        if (!s.passive && finalStatus != "stopped" && finalStatus != "superseded") notifyFinished(row)
+        // Everyday recording continues after a test ends and across days; otherwise monitoring stops.
+        val resumeEveryday = finalStatus != "superseded" && !(s.passive && finalStatus == "stopped")
+        if (!(resumeEveryday && startPassiveIfEnabled())) {
+            if (finalStatus != "superseded") service?.stopMonitoring()
+        }
         return row
     }
 
@@ -265,7 +311,7 @@ object Recorder {
     /** Called when the service (re)starts: restores state after process death and records the gap. */
     fun onServiceStarted() {
         if (active != null) return
-        if (!restore()) service?.stopMonitoring()
+        if (!restore() && !startPassiveIfEnabled()) service?.stopMonitoring()
     }
 
     // ------------------------------------------------------------------ core
@@ -280,6 +326,7 @@ object Recorder {
             row.optIntOrNull("target_level"), row.optIntOrNull("lower_threshold"), row.getLong("start_wall"),
             JSONArray(row.getString("tracked_params") ?: "[]").let { a -> List(a.length()) { a.getString(it) } },
             row.getString("status")!!,
+            row.optString("mode", "test"),
         )
         val state = db.queryOne("SELECT id FROM config_state WHERE session_id = ? ORDER BY id DESC LIMIT 1", id)
         stateId = state?.getLong("id") ?: 0L
@@ -391,6 +438,13 @@ object Recorder {
      */
     private fun checkLimits(s: Active, r: BatteryReading, t: Clock) {
         if (active !== s || s.status != "active") return
+        if (s.passive) {
+            // One everyday session per calendar day: each day is one independent sample (§R2.9).
+            val zone = java.time.ZoneId.systemDefault()
+            val day = { ms: Long -> java.time.Instant.ofEpochMilli(ms).atZone(zone).toLocalDate() }
+            if (day(t.wall) != day(s.startWall)) stop("rolled")
+            return
+        }
         val target = s.target
         val threshold = s.threshold
         val held = s.type == "charging" && r.plugged != 0 &&
@@ -505,7 +559,40 @@ object Recorder {
         else -> if (r.plugged == 0) -1 else 0
     }
 
-    private fun limitOf(s: Active) = if (s.type == "charging") s.target ?: 100 else s.threshold ?: 0
+    /** Where the live estimate counts to: the test's limit, or the always-on reserve / charge target. */
+    private fun limitOf(s: Active, dir: Int): Int = when {
+        s.passive && dir > 0 -> db.getSetting(SETTING_CHARGE_TARGET)?.toIntOrNull() ?: 100
+        s.passive -> db.getSetting(SETTING_RESERVE)?.toIntOrNull() ?: 20
+        s.type == "charging" -> s.target ?: 100
+        else -> s.threshold ?: 0
+    }
+
+    /**
+     * History for the current configuration, as computed by the UI's engine and stored under
+     * [SETTING_PRIORS]: {"draining": {"keys": [...], "rates": {"k=v;…": {"rate": r, "steps": n}}}, "charging": …}.
+     */
+    private fun prior(dir: Int): Pair<Double, Int>? {
+        val all = priorsCache ?: runCatching { JSONObject(db.getSetting(SETTING_PRIORS) ?: "{}") }.getOrNull()
+            ?.also { priorsCache = it } ?: return null
+        val side = all.optJSONObject(if (dir > 0) "charging" else "draining") ?: return null
+        val keys = side.optJSONArray("keys") ?: return null
+        val parts = (0 until keys.length()).map { keys.getString(it) }.sorted().map { k ->
+            "$k=${values[k]?.value ?: return null}"
+        }
+        val r = side.optJSONObject("rates")?.optJSONObject(parts.joinToString(";")) ?: return null
+        return r.optDouble("rate").takeIf { it > 0 }?.let { it to r.optInt("steps") }
+    }
+
+    /** Live rate: this configuration's history blended with the current run (display only). */
+    private fun liveRate(dir: Int): Double? {
+        val p = prior(dir)
+        return LiveEstimator.blend(p?.first, p?.second ?: 0, live.ratePerHour(), live.steps)
+    }
+
+    private fun hoursTo(level: Int, limit: Int, dir: Int, rate: Double?): Double? {
+        val points = (limit - level) * dir
+        return if (rate != null && rate > 0 && points > 0) points / rate else null
+    }
 
     /** Replays the current configuration's samples (this boot, since the last pause/resume) into the live estimator. */
     private fun rebuildLive(sessionId: String, t: Clock, gap: Boolean) {
@@ -536,25 +623,27 @@ object Recorder {
 
     /** Notification content: expected time to the limit plus the measured rate it comes from, nothing else. */
     private fun liveSummary(s: Active, r: BatteryReading): Notice {
-        val limit = limitOf(s)
         val dir = directionOf(r)
-        val wanted = if (s.type == "charging") 1 else -1
-        val title = "${if (s.type == "charging") "Charging" else "Draining"} test · ${r.level}%"
+        val limit = limitOf(s, dir)
+        val wanted = if (s.passive) dir else if (s.type == "charging") 1 else -1
+        val title = if (s.passive) "Always-on · ${r.level}%"
+            else "${if (s.type == "charging") "Charging" else "Draining"} test · ${r.level}%"
         val lines = mutableListOf<String>()
         val text = when {
             s.status == "paused" -> "Paused, not counted"
-            dir == 0 -> "Plugged in but not charging, not counted"
+            dir == 0 -> if (s.passive) "Plugged in, not charging" else "Plugged in but not charging, not counted"
             dir != wanted -> if (s.type == "charging") "Unplugged, interruption not counted" else "Charging, interruption not counted"
             else -> {
-                val rate = live.ratePerHour()
-                val hours = live.hoursTo(r.level, limit)
+                val rate = liveRate(dir)
+                val hours = hoursTo(r.level, limit, dir, rate)
+                val hasHistory = prior(dir) != null
                 if (hours != null) {
-                    lines += if (s.type == "draining") "Recharge around ${clockIn(hours)}" else "Reaches $limit% around ${clockIn(hours)}"
+                    lines += if (dir < 0) "Recharge around ${clockIn(hours)}" else "Reaches $limit% around ${clockIn(hours)}"
                 }
                 when {
                     rate == null -> "Measuring… waiting for the next 1% change"
                     hours == null -> "%.1f %%/h".format(rate)
-                    live.steps < LiveEstimator.MIN_STEPS_MEASURED -> "Early estimate ≈ ${duration(hours)} to $limit%"
+                    live.steps < LiveEstimator.MIN_STEPS_MEASURED && !hasHistory -> "Early estimate ≈ ${duration(hours)} to $limit%"
                     else -> "≈ ${duration(hours)} to $limit% · " + "%.1f %%/h".format(rate)
                 }
             }
@@ -620,17 +709,23 @@ object Recorder {
         val bm = app.getSystemService(BatteryManager::class.java)
         val counter = validCounter(bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER))
         val current = validCurrent(bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_AVERAGE))
-        val limit = limitOf(s)
         val dir = directionOf(r)
+        val limit = limitOf(s, dir)
         val instant = LiveEstimator.instantHours(counter, current, r.level, limit, dir)
         val notice = liveSummary(s, r)
+        val rate = liveRate(dir)
+        val p = prior(dir)
         return JSObject().apply {
             put("limit", limit)
             put("direction", dir)
             put("steps", live.steps)
-            put("ratePerHour", live.ratePerHour() ?: JSONObject.NULL)
-            put("hoursToLimit", live.hoursTo(r.level, limit) ?: JSONObject.NULL)
-            put("measured", live.steps >= LiveEstimator.MIN_STEPS_MEASURED)
+            put("ratePerHour", rate ?: JSONObject.NULL)
+            put("runRatePerHour", live.ratePerHour() ?: JSONObject.NULL)
+            put("hoursToLimit", hoursTo(r.level, limit, dir, rate) ?: JSONObject.NULL)
+            put("measured", live.steps >= LiveEstimator.MIN_STEPS_MEASURED || p != null)
+            put("historyRate", p?.first ?: JSONObject.NULL)
+            put("historySteps", p?.second ?: 0)
+            put("passive", s.passive)
             put("instantMa", instant?.first ?: JSONObject.NULL)
             put("instantHours", instant?.second ?: JSONObject.NULL)
             put("summary", notice.text)
