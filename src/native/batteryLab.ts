@@ -99,6 +99,13 @@ export interface BatteryLabPlugin {
   deleteSession(options: { id: string }): Promise<void>;
   getOverhead(): Promise<{ days: Row[] }>;
   addListener(event: 'sampleAdded', fn: (e: SampleAddedEvent) => void): Promise<PluginListenerHandle>;
+  /** A notification asked the UI to open something ("log_change" or "session:<id>"). */
+  addListener(event: 'openRequest', fn: (e: { action: string }) => void): Promise<PluginListenerHandle>;
+  /** The same request when it launched the app; returned once. */
+  getLaunchAction(): Promise<{ action: string | null }>;
+  getDeviceInfo(): Promise<{ is24Hour: boolean }>;
+  /** Saves text through Android's "Save to…" picker. Rejects with "cancelled" if the user backs out. */
+  saveFile(options: { filename: string; mime: string; content: string }): Promise<{ uri: string }>;
 
   probe(): Promise<ProbeReport>;
   sampleBroadcasts(options: { seconds: number }): Promise<BroadcastStats>;

@@ -125,6 +125,12 @@ class MonitorService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val icon = android.graphics.drawable.Icon.createWithResource(this, R.drawable.ic_stat_monitor)
+        // Opens the app straight into the "Log a setting change" sheet.
+        val logChange = PendingIntent.getActivity(
+            this, 2, Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .putExtra(MainActivity.EXTRA_OPEN, "log_change"),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
         // The chronometer is rendered by the system UI, so the elapsed time ticks without waking the app.
         return Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_monitor)
@@ -134,7 +140,7 @@ class MonitorService : Service() {
             .setStyle(Notification.BigTextStyle().bigText(n.details))
             .setContentIntent(open)
             .addAction(Notification.Action.Builder(icon, if (paused) "Resume" else "Pause", toggle).build())
-            .addAction(Notification.Action.Builder(icon, "Log change", open).build())
+            .addAction(Notification.Action.Builder(icon, "Log change", logChange).build())
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setShowWhen(true)

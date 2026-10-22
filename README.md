@@ -29,7 +29,9 @@ adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 
 - M0 capability probe: done (results in docs/PLAN.md R2.5).
 - M1 skeleton: done.
-- Parameter selection with cost/downside analysis: done.
-- M2 recorder (foreground service, persistence policy, gap/reboot recovery, config changes): built, awaiting on-device acceptance run.
-- Live notification estimate (R2.6): built.
-- M3+ (estimator engine, results, export): not started.
+- M2 recorder: built (foreground service, persistence policy, gap/reboot recovery, config changes,
+  battery-protection hold detection, finish notification). On-device reboot acceptance run still pending.
+- M3 estimator (`src/engine/steps.ts`, `compare.ts`): complete-step extraction, per-session rates,
+  band medians, predictions, comparisons with inconclusive verdicts.
+- M4 session UI, M5 results/comparisons, M6 CSV/JSON export: built.
+- M7 overhead: in-app counters (Setup → Advanced); batterystats A/B runs still to do on the device.

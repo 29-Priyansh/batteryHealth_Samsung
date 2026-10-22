@@ -54,9 +54,8 @@
         </provider>
     </application>
 
-    <!-- Permissions (see docs/PLAN.md §2). No analytics, no network use by the app itself.
-         INTERNET is kept only until removing it is verified not to break the local WebView (M7). -->
-    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Permissions (see docs/PLAN.md §2). No INTERNET: the app is fully local, and Capacitor serves
+         its pages through WebViewAssetLoader, which never opens a network connection. -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />

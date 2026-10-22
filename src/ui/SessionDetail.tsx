@@ -6,6 +6,11 @@ import { BatteryLab, type SessionData } from '../native/batteryLab';
 import { useBackHandler } from './backStack';
 import { installReach } from './reachability';
 import { formatHours, Icon, Sheet, toast } from './components';
+import { exportJson, forgetSession, samplesCsv, saveExport, stamp } from './data';
+import { LevelChart } from './LevelChart';
+import { loadSetting } from './settingsStore';
+import { fmtDateTime, fmtTime } from './time';
+import { DEFAULT_SELECTION } from '../engine/params';
 
 const SRC: Record<string, [string, string]> = {
   verified: ['✓', 'Read from the phone'],
@@ -16,6 +21,7 @@ const SRC: Record<string, [string, string]> = {
 
 const END_REASON: Record<string, string> = {
   target_reached: 'Reached the target',
+  held_at_limit: 'Stopped charging below the target (battery protection)',
   threshold_reached: 'Reached the discharge level',
   stopped: 'Stopped by you',
   active: 'Still recording',
@@ -46,12 +52,14 @@ export function SessionDetail({ id, canDelete, act, onClose }: {
     return () => reach.destroy();
   }, []);
 
-  const copy = async () => {
-    if (!data) return;
-    try {
-      await navigator.clipboard.writeText(JSON.stringify(data));
-      toast(`Copied ${data.samples.length} observations`);
-    } catch { toast('Copy failed'); }
+  const name = () => `battery-lab-${data!.session.type}-${stamp(Number(data!.session.start_wall))}`;
+  const exportCsv = () => saveExport(`${name()}.csv`, 'text/csv', samplesCsv([data!]));
+  const exportFull = async () => {
+    const selection = {
+      charging: await loadSetting('selection.charging', DEFAULT_SELECTION.slice()),
+      draining: await loadSetting('selection.draining', DEFAULT_SELECTION.slice()),
+    };
+    await saveExport(`${name()}.json`, 'application/json', exportJson([data!], selection));
   };
 
   useEffect(() => {
@@ -68,7 +76,8 @@ export function SessionDetail({ id, canDelete, act, onClose }: {
         {data ? <Detail data={data} /> : <p class="muted center">Loading…</p>}
         {data && (
           <div class="actions">
-            <button onClick={copy}>Copy raw data</button>
+            <button onClick={exportCsv}>Export CSV</button>
+            <button onClick={exportFull}>Export JSON</button>
             {canDelete && <button class="danger" onClick={() => setConfirmDelete(true)}>Delete test</button>}
           </div>
         )}
@@ -79,6 +88,7 @@ export function SessionDetail({ id, canDelete, act, onClose }: {
           <div class="actions stack">
             <button class="danger" onClick={() => act(async () => {
               await BatteryLab.deleteSession({ id });
+              forgetSession(id);
               setConfirmDelete(false);
               onClose();
             }, 'Test deleted')}>Delete</button>
@@ -104,11 +114,11 @@ function Detail({ data }: { data: SessionData }) {
       <div class={`card summary ${s.type}`}>
         <div class="live-head">
           <span class={`tag ${s.type}`}><Icon name={s.type === 'charging' ? 'bolt' : 'drain'} size={14} /> {s.type}</span>
-          <span class="muted small">{new Date(Number(s.start_wall)).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</span>
+          <span class="muted small">{fmtDateTime(Number(s.start_wall))}</span>
         </div>
         <Headline summary={summary} />
         <div class="muted small">{END_REASON[String(s.status)] ?? String(s.status).replace('_', ' ')}
-          {s.end_wall != null && ` at ${new Date(Number(s.end_wall)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}</div>
+          {s.end_wall != null && ` at ${fmtTime(Number(s.end_wall))}`}</div>
         <div class="stat-row">
           <div><span class="muted small">{s.type === 'charging' ? 'Charging' : 'Discharging'}</span><b>{formatHours(summary.activeMs / 3.6e6)}</b></div>
           <div><span class="muted small">Interrupted</span><b>{formatHours(summary.interruptedMs / 3.6e6)}</b></div>
@@ -122,6 +132,11 @@ function Detail({ data }: { data: SessionData }) {
         )}
         <p class="muted small">"Average" is the overall percentage points per {s.type === 'charging' ? 'charging' : 'discharging'} hour. It mixes any configurations used during the test.</p>
         {s.notes && <p class="notes">“{s.notes}”</p>}
+      </div>
+
+      <div class="card">
+        <h3 class="section-h">Battery level</h3>
+        <LevelChart session={s} samples={data.samples} changes={data.configChanges} />
       </div>
 
       <div class="card">
@@ -167,7 +182,7 @@ function Headline({ summary }: { summary: SessionSummary }) {
 }
 
 function ChangeItem({ c, start }: { c: ChangeEntry; start: number }) {
-  const time = new Date(c.wall).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const time = fmtTime(c.wall);
   return (
     <li class={c.source}>
       <div class="tl-meta">{time} · {formatHours((c.wall - start) / 3.6e6)} in</div>

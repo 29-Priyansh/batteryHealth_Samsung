@@ -19,8 +19,6 @@ import com.getcapacitor.JSObject
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.LocalDate
-import java.time.LocalTime
-import java.time.format.DateTimeFormatter
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.Executors
@@ -34,6 +32,9 @@ object Recorder {
     private const val HEARTBEAT_MS = 10 * 60_000L
     private const val GAP_MS = 15 * 60_000L
     private const val MANUAL_WINDOW_MAX_MS = 30 * 60_000L
+    /** Plugged in but not charging this long during a charging test = held by battery protection. */
+    private const val HELD_LIMIT_MS = 15 * 60_000L
+    private const val RESULTS_CHANNEL = "results"
 
     private val exec = Executors.newSingleThreadExecutor()
     private lateinit var app: Context
@@ -65,6 +66,7 @@ object Recorder {
     private var statRows = 0L
     private var statCpuNs = 0L
     private val live = LiveEstimator()
+    private var heldSinceElapsed: Long? = null
 
     /** Elapsed time the UI last went to the background; bounds manual-change windows. */
     @Volatile var uiPausedElapsed: Long = 0L
@@ -192,8 +194,12 @@ object Recorder {
         values = emptyMap()
         lastPersisted = null
         lastPersistClock = null
+        heldSinceElapsed = null
         service?.stopMonitoring()
-        return sessionJson(s.id)
+        val row = sessionJson(s.id)
+        // Stops the user did not ask for get a short result notification; a manual stop happens in the app.
+        if (finalStatus != "stopped") notifyFinished(row)
+        return row
     }
 
     /** Manual parameter change (or confirmation that a value is unknown). */
@@ -219,13 +225,17 @@ object Recorder {
         val s = active ?: return@measured
         val r = intent.toReading() ?: return@measured
         val t = now()
-        val reason = policy.reason(lastPersisted, lastPersistClock?.elapsed ?: 0, r, t.elapsed) ?: return@measured
+        val reason = policy.reason(lastPersisted, lastPersistClock?.elapsed ?: 0, r, t.elapsed)
+        if (reason == null) {
+            checkLimits(s, r, t)
+            return@measured
+        }
         val before = lastPersistClock
         reconcileAuto("sample_poll", exact = false)
         // A detected change already wrote a row with this same reading; don't write it twice.
         if (lastPersistClock === before || lastPersisted != r) persist(r, reason, t)
         if (reason == "heartbeat") flushStats()
-        checkLimits(s, r)
+        checkLimits(s, r, t)
     }
 
     fun onScreen(on: Boolean) = measured {
@@ -374,12 +384,22 @@ object Recorder {
         }
     }
 
-    /** Charging sessions end at their target; draining sessions at their lower threshold. */
-    private fun checkLimits(s: Active, r: BatteryReading) {
+    /**
+     * Charging sessions end at their target; draining sessions at their lower threshold. A charging
+     * session that stays plugged in but not charging (e.g. Samsung battery protection at 80–95%)
+     * ends as "held_at_limit" instead of running forever below an unreachable target.
+     */
+    private fun checkLimits(s: Active, r: BatteryReading, t: Clock) {
         if (active !== s || s.status != "active") return
         val target = s.target
         val threshold = s.threshold
+        val held = s.type == "charging" && r.plugged != 0 &&
+            (r.status == BatteryManager.BATTERY_STATUS_NOT_CHARGING || r.status == BatteryManager.BATTERY_STATUS_FULL)
+        if (!held) heldSinceElapsed = null else if (heldSinceElapsed == null) heldSinceElapsed = t.elapsed
+        val heldFor = heldSinceElapsed?.let { t.elapsed - it } ?: 0L
         when {
+            s.type == "charging" && heldFor >= HELD_LIMIT_MS && (target == null || r.level < target) ->
+                stop("held_at_limit", JSONObject().put("level", r.level).put("held_ms", heldFor))
             s.type == "charging" && target != null && r.level >= target ->
                 stop("target_reached", JSONObject().put("level", r.level))
             s.type == "draining" && threshold != null && r.level <= threshold ->
@@ -558,9 +578,40 @@ object Recorder {
         return if (m >= 60) "${m / 60} h ${m % 60} m" else "$m m"
     }
 
+    /** Clock time [hours] from now, in the phone's own 12/24-hour format. */
     private fun clockIn(hours: Double): String =
-        LocalTime.now().plusMinutes((hours * 60).toLong())
-            .format(DateTimeFormatter.ofPattern("hh:mm a", java.util.Locale.ENGLISH)).lowercase()
+        android.text.format.DateFormat.getTimeFormat(app).format(java.util.Date(System.currentTimeMillis() + (hours * 3_600_000).toLong()))
+
+    private fun notifyFinished(row: JSObject) {
+        val nm = app.getSystemService(android.app.NotificationManager::class.java)
+        nm.createNotificationChannel(
+            android.app.NotificationChannel(RESULTS_CHANNEL, "Test results", android.app.NotificationManager.IMPORTANCE_DEFAULT),
+        )
+        val type = row.getString("type") ?: "?"
+        val startLevel = row.optInt("start_level")
+        val endLevel = row.optInt("end_level")
+        val took = duration((row.optLong("end_wall") - row.optLong("start_wall")) / 3_600_000.0)
+        val title = when (row.getString("status")) {
+            "held_at_limit" -> "Charging stopped at $endLevel% (battery protection)"
+            "target_reached" -> "Charging test finished"
+            else -> "Draining test finished"
+        }
+        val open = android.app.PendingIntent.getActivity(
+            app, row.getString("id").hashCode(),
+            Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .putExtra(MainActivity.EXTRA_OPEN, "session:${row.getString("id")}"),
+            android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val text = "${type.replaceFirstChar { it.uppercase() }} $startLevel% → $endLevel% took $took"
+        nm.notify(row.getString("id").hashCode(), android.app.Notification.Builder(app, RESULTS_CHANNEL)
+            .setSmallIcon(R.drawable.ic_stat_monitor)
+            .setColor(0xFF4565BC.toInt())
+            .setContentTitle(title)
+            .setContentText(text)
+            .setContentIntent(open)
+            .setAutoCancel(true)
+            .build())
+    }
 
     /** Live indicator for the Test screen (same numbers as the notification). */
     fun liveJson(): JSObject? {

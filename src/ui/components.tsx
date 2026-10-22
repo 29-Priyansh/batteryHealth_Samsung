@@ -145,6 +145,7 @@ const paths: Record<string, string> = {
   bolt: 'M13 2 4 14h7l-1 8 9-12h-7z',
   drain: 'M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z',
   back: 'M19 12H5M11 6l-6 6 6 6',
+  results: 'M4 20V10M10 20V4M16 20v-7M22 20H2',
 };
 
 export function Icon({ name, size = 22 }: { name: keyof typeof paths | string; size?: number }) {
@@ -171,6 +172,4 @@ export function formatElapsed(ms: number): string {
   return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}` : `${m}:${String(s % 60).padStart(2, '0')}`;
 }
 
-export function clockIn(hours: number): string {
-  return new Date(Date.now() + hours * 3_600_000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
+export { clockIn } from './time';

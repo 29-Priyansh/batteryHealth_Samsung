@@ -1,8 +1,10 @@
 import { Capacitor } from '@capacitor/core';
 import { useEffect, useState } from 'preact/hooks';
 import { applicable, DEFAULT_SELECTION, getParam, type ParamDef, type TestType } from '../engine/params';
-import { BatteryLab, type CurrentState, type LiveEstimate, type SessionRow } from '../native/batteryLab';
+import { BatteryLab, type CurrentState, type LiveEstimate } from '../native/batteryLab';
 import { ChipGroup, clockIn, formatElapsed, formatHours, Gauge, Icon, LevelPicker, Segmented, Sheet, toast } from './components';
+import { HistoryPage, SessionCard, type Act, type SessionItem } from './sessionsUi';
+import { onOpenRequest } from './time';
 import { SessionDetail } from './SessionDetail';
 import { loadSetting, saveSetting } from './settingsStore';
 
@@ -14,12 +16,13 @@ const SRC_BADGE: Record<string, [string, string]> = {
   unknown: ['?', 'Unknown'],
 };
 
-type SessionItem = SessionRow & { sample_count: number; change_count: number };
-type Act = (fn: () => Promise<unknown>, done?: string) => Promise<void>;
+const RECENT = 5;
 
 export function TestScreen() {
   const [state, setState] = useState<CurrentState | null>(null);
   const [sessions, setSessions] = useState<SessionItem[]>([]);
+  const [openSession, setOpenSession] = useState<string | null>(null);
+  const [logRequested, setLogRequested] = useState(0);
 
   const refresh = async () => {
     try {
@@ -36,7 +39,14 @@ export function TestScreen() {
     const timer = window.setInterval(() => { if (document.visibilityState === 'visible') void refresh(); }, 60_000);
     const onVisible = () => { if (document.visibilityState === 'visible') void refresh(); };
     document.addEventListener('visibilitychange', onVisible);
+    // Notification taps: "Log change" opens the sheet, a finished-test notification opens that test.
+    const offOpen = onOpenRequest((r) => {
+      if (r.kind === 'session') setOpenSession(r.id);
+      else setLogRequested((n) => n + 1);
+      void refresh();
+    });
     return () => {
+      offOpen();
       void sub.then((h) => h.remove());
       clearInterval(timer);
       document.removeEventListener('visibilitychange', onVisible);
@@ -72,17 +82,21 @@ export function TestScreen() {
       </div>
 
       {state.activeSession
-        ? <ActiveSession state={state} act={act} />
-        : <StartForm act={act} level={b?.level ?? null} />}
+        ? <ActiveSession state={state} act={act} logRequested={logRequested} />
+        : <StartForm act={act} battery={b} />}
 
       <SessionList sessions={sessions} activeId={state.activeSession?.id} act={act} onChanged={() => void refresh()} />
+      {openSession && (
+        <SessionDetail id={openSession} canDelete={openSession !== state.activeSession?.id} act={act}
+          onClose={() => { setOpenSession(null); void refresh(); }} />
+      )}
     </section>
   );
 }
 
 // ---------------------------------------------------------------- active session
 
-function ActiveSession({ state, act }: { state: CurrentState; act: Act }) {
+function ActiveSession({ state, act, logRequested }: { state: CurrentState; act: Act; logRequested: number }) {
   const s = state.activeSession!;
   const tracked: string[] = JSON.parse(String(s.tracked_params ?? '[]'));
   const manualParams = applicable(tracked, s.type).filter((p) => p.detection === 'manual');
@@ -94,6 +108,7 @@ function ActiveSession({ state, act }: { state: CurrentState; act: Act }) {
     const t = window.setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
+  useEffect(() => { if (logRequested && manualParams.length > 0) setSheet('log'); }, [logRequested]);
 
   return (
     <>
@@ -122,21 +137,21 @@ function ActiveSession({ state, act }: { state: CurrentState; act: Act }) {
       </div>
 
       <div class="card">
-        <h3>Configuration</h3>
+        <h3>Compared settings</h3>
         <ul class="config">
           {Object.entries(state.activeValues ?? {})
-            .sort(([a], [b]) => Number(tracked.includes(b)) - Number(tracked.includes(a)))
+            .filter(([k]) => tracked.includes(k))
             .map(([k, v]) => {
               const [mark, title] = SRC_BADGE[v.src] ?? ['?', v.src];
               return (
-                <li class={tracked.includes(k) ? '' : 'condition'}>
+                <li>
                   <span>{getParam(k).label}</span>
                   <span><b>{v.value ?? 'unknown'}</b> <span class={`src ${v.src}`} title={title}>{mark}</span></span>
                 </li>
               );
             })}
         </ul>
-        <p class="muted small">Faded rows are recorded as conditions only; they don't define the configuration.</p>
+        <p class="muted small">Other settings are recorded too (shown at the top) and can be compared later from Setup.</p>
       </div>
 
       {sheet === 'log' && <LogChangeSheet params={manualParams} current={state.activeValues ?? {}} act={act} onClose={() => setSheet(null)} />}
@@ -150,24 +165,31 @@ function ActiveSession({ state, act }: { state: CurrentState; act: Act }) {
 }
 
 function LiveBlock({ live, type }: { live: LiveEstimate | null; type: TestType }) {
+  const [info, setInfo] = useState(false);
   if (!live) return <div class="estimate"><div class="big">–</div></div>;
   const wanted = type === 'charging' ? 1 : -1;
   if (live.direction !== wanted) {
     return <div class="estimate"><div class="big muted">Not counted</div><div class="muted">{live.summary}</div></div>;
   }
-  const quality = live.ratePerHour == null ? 'Measuring' : live.measured ? `Measured · ${live.steps} steps` : `Early estimate · ${live.steps} step${live.steps === 1 ? '' : 's'}`;
+  const quality = live.ratePerHour == null ? 'measuring' : live.measured ? `measured · ${live.steps} steps` : `early · ${live.steps} step${live.steps === 1 ? '' : 's'}`;
   return (
     <div class="estimate">
-      <div class="big">{live.hoursToLimit != null ? formatHours(live.hoursToLimit) : live.ratePerHour == null ? 'Measuring…' : '–'}</div>
+      <div class="big-row">
+        <div class="big">{live.hoursToLimit != null ? formatHours(live.hoursToLimit) : live.ratePerHour == null ? 'Measuring…' : '–'}</div>
+        <span class={`badge ${live.measured ? 'auto' : 'manual'}`}>{quality}</span>
+      </div>
       <div>{live.hoursToLimit != null
         ? <>to {live.limit}% · {type === 'draining' ? 'recharge' : 'done'} around <b>{clockIn(live.hoursToLimit)}</b></>
         : live.ratePerHour == null ? 'Waiting for the next 1% change' : ''}</div>
-      <div class="stat-row">
+      <div class="stat-row two">
         <div><span class="muted small">Rate</span><b>{live.ratePerHour != null ? `${live.ratePerHour.toFixed(1)} %/h` : '–'}</b></div>
-        <div><span class="muted small">Instant ({live.instantMa ?? '–'} mA)</span><b>{formatHours(live.instantHours)}</b></div>
-        <div><span class="muted small">Quality</span><b class={live.measured ? 'ok' : 'warn'}>{quality}</b></div>
+        <div><span class="muted small">Instant · {live.instantMa ?? '–'} mA</span><b>{formatHours(live.instantHours)}</b></div>
       </div>
-      <p class="muted small">"Rate" comes from completed 1% steps in this configuration; "Instant" comes from the current draw right now and swings with use. Both assume nothing changes.</p>
+      <button class="link small" onClick={() => setInfo(!info)} aria-expanded={info}>ⓘ How these are estimated</button>
+      {info && (
+        <p class="muted small">"Rate" comes from completed 1% steps in the current configuration; "Instant" comes from the current
+          draw right now and swings with use. Both assume nothing changes. Results across tests are on the Results tab.</p>
+      )}
     </div>
   );
 }
@@ -258,7 +280,9 @@ function StopSheet({ manualParams, act, onClose }: { manualParams: ParamDef[]; a
 
 // ---------------------------------------------------------------- start form
 
-function StartForm({ act, level }: { act: Act; level: number | null }) {
+function StartForm({ act, battery }: { act: Act; battery: CurrentState['battery'] }) {
+  const level = battery?.level ?? null;
+  const plugged = battery != null && battery.plugged !== 0;
   const [type, setType] = useState<TestType>('draining');
   const [selection, setSelection] = useState<Record<TestType, string[]>>({ charging: DEFAULT_SELECTION.slice(), draining: DEFAULT_SELECTION.slice() });
   const [chargers, setChargers] = useState<string[]>([]);
@@ -330,6 +354,12 @@ function StartForm({ act, level }: { act: Act; level: number | null }) {
           {rangeError ?? <>Range <b>{level}% → {type === 'charging' ? target : threshold}%</b> · {span} percentage points</>}
         </div>
       )}
+      {type === 'draining' && plugged && (
+        <p class="warn-box">The phone is plugged in. Unplug it before starting, or the time until you do is counted as an interruption.</p>
+      )}
+      {type === 'charging' && battery != null && !plugged && (
+        <p class="info-box">Plug in after starting. Time before the charger is connected isn't counted as charging.</p>
+      )}
       {!rangeError && span != null && span < 5 && (
         <p class="muted small">A range under 5 points gives too few 1% steps for a reliable rate; the result will likely be "insufficient data".</p>
       )}
@@ -374,44 +404,27 @@ function StartForm({ act, level }: { act: Act; level: number | null }) {
 
 // ---------------------------------------------------------------- history
 
-const STATUS_LABEL: Record<string, string> = {
-  active: 'recording', paused: 'paused', stopped: 'stopped',
-  target_reached: 'target reached', threshold_reached: 'finished',
-};
-
 function SessionList({ sessions, activeId, act, onChanged }: {
   sessions: SessionItem[]; activeId?: string; act: Act; onChanged: () => void;
 }) {
   const [openId, setOpenId] = useState<string | null>(null);
+  const [all, setAll] = useState(false);
   if (sessions.length === 0) return null;
 
   return (
     <>
-      <h3 class="section-title">Recent tests</h3>
+      <div class="section-row">
+        <h3 class="section-title">Recent tests</h3>
+        {sessions.length > RECENT && <button class="link" onClick={() => setAll(true)}>See all ({sessions.length})</button>}
+      </div>
       <ul class="sessions">
-        {sessions.map((s) => {
-          const ended = s.end_wall != null;
-          const took = ended ? formatHours((Number(s.end_wall) - Number(s.start_wall)) / 3.6e6) : null;
-          return (
-            <li class="card session tappable" role="button" tabIndex={0} onClick={() => setOpenId(s.id)}>
-              <div class={`session-icon ${s.type}`}><Icon name={s.type === 'charging' ? 'bolt' : 'drain'} size={18} /></div>
-              <div class="session-main">
-                <div><b>{s.start_level}% → {s.end_level ?? '…'}%</b>{took && <> · took <b>{took}</b></>}</div>
-                <div class="muted small">
-                  {new Date(s.start_wall).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
-                  {s.change_count > 0 && ` · ${s.change_count} setting change${s.change_count === 1 ? '' : 's'}`}
-                </div>
-              </div>
-              <span class={`status ${s.status}`}>{STATUS_LABEL[s.status] ?? s.status.replace('_', ' ')}</span>
-              <span class="chevron" aria-hidden="true">›</span>
-            </li>
-          );
-        })}
+        {sessions.slice(0, RECENT).map((s) => <SessionCard s={s} onOpen={() => setOpenId(s.id)} />)}
       </ul>
       {openId && (
         <SessionDetail id={openId} canDelete={openId !== activeId} act={act}
           onClose={() => { setOpenId(null); onChanged(); }} />
       )}
+      {all && <HistoryPage activeId={activeId} act={act} onClose={() => { setAll(false); onChanged(); }} />}
     </>
   );
 }

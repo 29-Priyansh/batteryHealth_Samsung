@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'preact/hooks';
 import {
   analyzeSelection, DEFAULT_ASSUMPTIONS, DEFAULT_SELECTION, PARAMS, type CostAssumptions, type TestType,
 } from '../engine/params';
-import { Segmented, toast } from './components';
+import { AdvancedPage } from './AdvancedPage';
+import { Icon, Segmented, toast } from './components';
 import { loadSetting, saveSetting } from './settingsStore';
 
 const TYPES: TestType[] = ['charging', 'draining'];
@@ -15,6 +16,7 @@ export function ParametersScreen() {
   const [assumptions, setAssumptions] = useState<Record<TestType, CostAssumptions>>(DEFAULT_ASSUMPTIONS);
   const [chargers, setChargers] = useState<string[]>([]);
   const [saved, setSaved] = useState<Record<TestType, string[]> | null>(null);
+  const [advanced, setAdvanced] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -115,6 +117,12 @@ export function ParametersScreen() {
         <button class="primary" disabled={!dirty} onClick={save}>{dirty ? 'Save selection' : 'Saved'}</button>
         <button onClick={() => setSelection((s) => ({ ...s, [type]: [...DEFAULT_SELECTION] }))}>Reset to default</button>
       </div>
+
+      <button class="card row-link" onClick={() => setAdvanced(true)}>
+        <span><b>Advanced</b><span class="muted small"> · diagnostics, permissions, app overhead</span></span>
+        <span class="chevron" aria-hidden="true">›</span>
+      </button>
+      {advanced && <AdvancedPage onClose={() => setAdvanced(false)} />}
     </section>
   );
 }

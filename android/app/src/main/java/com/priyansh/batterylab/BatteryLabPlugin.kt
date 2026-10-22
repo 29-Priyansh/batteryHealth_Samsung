@@ -24,6 +24,8 @@ import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
+import androidx.activity.result.ActivityResult
+import com.getcapacitor.annotation.ActivityCallback
 import com.getcapacitor.annotation.CapacitorPlugin
 import com.getcapacitor.annotation.Permission
 import com.getcapacitor.annotation.PermissionCallback
@@ -46,7 +48,11 @@ class BatteryLabPlugin : Plugin() {
     @Volatile private var visible = true
     private val sampleListener: (JSObject) -> Unit = { msg -> if (visible) notifyListeners("sampleAdded", msg) }
 
+    /** Pending "open" request from the launching intent, consumed once by the UI. */
+    @Volatile private var launchAction: String? = null
+
     override fun load() {
+        launchAction = activity?.intent?.getStringExtra(MainActivity.EXTRA_OPEN)
         Recorder.init(context)
         Recorder.listeners.add(sampleListener)
         // If a session survived a process death without the service restarting, resume monitoring now.
@@ -62,6 +68,49 @@ class BatteryLabPlugin : Plugin() {
     override fun handleOnResume() {
         visible = true
         super.handleOnResume()
+    }
+
+    override fun handleOnNewIntent(intent: Intent) {
+        super.handleOnNewIntent(intent)
+        val action = intent.getStringExtra(MainActivity.EXTRA_OPEN) ?: return
+        notifyListeners("openRequest", JSObject().put("action", action))
+    }
+
+    @PluginMethod
+    fun getLaunchAction(call: PluginCall) {
+        call.resolve(JSObject().put("action", launchAction ?: JSONObject.NULL))
+        launchAction = null
+    }
+
+    @PluginMethod
+    fun getDeviceInfo(call: PluginCall) =
+        call.resolve(JSObject().put("is24Hour", android.text.format.DateFormat.is24HourFormat(context)))
+
+    // ------------------------------------------------------------------ export (Storage Access Framework)
+
+    @PluginMethod
+    fun saveFile(call: PluginCall) {
+        val name = call.getString("filename") ?: return call.reject("filename required")
+        val mime = call.getString("mime") ?: "application/octet-stream"
+        if (call.getString("content") == null) return call.reject("content required")
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
+            .setType(mime).putExtra(Intent.EXTRA_TITLE, name)
+        startActivityForResult(call, intent, "saveFileResult")
+    }
+
+    @ActivityCallback
+    private fun saveFileResult(call: PluginCall, result: ActivityResult) {
+        val uri = result.data?.data
+        if (result.resultCode != android.app.Activity.RESULT_OK || uri == null) return call.reject("cancelled")
+        val content = call.getString("content")!!
+        io.execute {
+            try {
+                context.contentResolver.openOutputStream(uri, "wt")!!.use { it.write(content.toByteArray(Charsets.UTF_8)) }
+                call.resolve(JSObject().put("uri", uri.toString()))
+            } catch (e: Exception) {
+                call.reject("Could not save: ${e.message}")
+            }
+        }
     }
 
     override fun handleOnDestroy() {
