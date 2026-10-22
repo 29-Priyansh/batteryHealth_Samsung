@@ -38,6 +38,10 @@ export const PARAMS: readonly ParamDef[] = [
     detection: 'auto', note: 'Strong confounder for mobile-data comparisons.',
   },
   {
+    key: 'sim_count', label: 'Active SIMs', levels: ['1', '2'], appliesTo: ['charging', 'draining'],
+    detection: 'auto', note: 'A second active SIM keeps another radio registration alive.',
+  },
+  {
     key: 'location', label: 'Location', levels: ['on', 'off'], appliesTo: ['draining'],
     detection: 'auto', note: 'Background location use can dominate idle drain.',
   },

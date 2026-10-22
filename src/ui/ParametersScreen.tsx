@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'preact/hooks';
 import {
   analyzeSelection, DEFAULT_ASSUMPTIONS, DEFAULT_SELECTION, PARAMS, type CostAssumptions, type TestType,
 } from '../engine/params';
+import { Segmented, toast } from './components';
 import { loadSetting, saveSetting } from './settingsStore';
 
 const TYPES: TestType[] = ['charging', 'draining'];
@@ -45,11 +46,14 @@ export function ParametersScreen() {
   const save = async () => {
     await saveSetting(`selection.${type}`, current);
     setSaved((s) => (s ? { ...s, [type]: current } : s));
+    toast(`${type === 'charging' ? 'Charging' : 'Draining'} selection saved`);
   };
 
+  const [newCharger, setNewCharger] = useState('');
   const addCharger = () => {
-    const name = prompt('Charger + cable label (e.g. "Samsung 45W + 1m cable")')?.trim();
+    const name = newCharger.trim();
     if (!name || chargers.includes(name)) return;
+    setNewCharger('');
     const next = [...chargers, name];
     setChargers(next);
     setAssumption('chargerCount', next.length);
@@ -58,17 +62,11 @@ export function ParametersScreen() {
 
   return (
     <section>
-      <div class="tabs" role="tablist">
-        {TYPES.map((t) => (
-          <button role="tab" aria-selected={t === type} class={t === type ? 'tab on' : 'tab'} onClick={() => setType(t)}>
-            {t === 'charging' ? 'Charging tests' : 'Draining tests'}
-          </button>
-        ))}
-      </div>
+      <Segmented options={TYPES} value={type} onChange={setType} label={(t) => (t === 'charging' ? 'Charging tests' : 'Draining tests')} />
 
       <p class="muted">Choose which settings define a configuration for {type} tests. Results are only compared between sessions with identical values for these.</p>
 
-      <ul class="params">
+      <ul class="card params">
         {candidates.map((p) => (
           <li>
             <label>
@@ -80,8 +78,12 @@ export function ParametersScreen() {
             <div class="note">{p.note}</div>
             {p.key === 'charger' && (
               <div class="chargers">
-                {chargers.map((c) => <span class="chip">{c}</span>)}
-                <button class="small" onClick={addCharger}>Add charger</button>
+                {chargers.map((c) => <span class="chip static">{c}</span>)}
+                <form class="inline" onSubmit={(e) => { e.preventDefault(); addCharger(); }}>
+                  <input class="text" placeholder="e.g. Samsung 45W + 1 m cable" value={newCharger}
+                    onInput={(e) => setNewCharger((e.target as HTMLInputElement).value)} />
+                  <button class="small" type="submit" disabled={!newCharger.trim()}>Add</button>
+                </form>
               </div>
             )}
           </li>

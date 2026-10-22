@@ -1,5 +1,6 @@
 import { Capacitor } from '@capacitor/core';
 import { useEffect, useState } from 'preact/hooks';
+import { toast } from './components';
 import { BatteryLab, type BroadcastStats, type PermissionState, type ProbeReport } from '../native/batteryLab';
 
 export function ProbeScreen() {
@@ -23,7 +24,7 @@ export function ProbeScreen() {
 
   const copy = async () => {
     const text = JSON.stringify({ report, broadcastStats: stats }, null, 2);
-    try { await navigator.clipboard.writeText(text); alert('Copied'); } catch { alert('Copy failed'); }
+    try { await navigator.clipboard.writeText(text); toast('Copied'); } catch { toast('Copy failed'); }
   };
 
   return (

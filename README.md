@@ -27,7 +27,9 @@ adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 
 ## Status
 
-- M0 capability probe: built; needs to be run on the phone (Diagnostics tab).
+- M0 capability probe: done (results in docs/PLAN.md R2.5).
 - M1 skeleton: done.
 - Parameter selection with cost/downside analysis: done.
-- M2+ (recorder, estimator, results): not started.
+- M2 recorder (foreground service, persistence policy, gap/reboot recovery, config changes): built, awaiting on-device acceptance run.
+- Live notification estimate (R2.6): built.
+- M3+ (estimator engine, results, export): not started.

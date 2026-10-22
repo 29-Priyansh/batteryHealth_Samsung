@@ -70,7 +70,7 @@ describe('analyzeSelection', () => {
   it('warns seriously about large selections', () => {
     const all = PARAMS.map((p) => p.key);
     const c = analyzeSelection(all, 'draining');
-    expect(c.configurations).toBe(2 ** 9);
+    expect(c.configurations).toBe(2 ** PARAMS.filter((p) => p.appliesTo.includes('draining')).length);
     expect(c.downsides.find((d) => d.id === 'thinning')?.severity).toBe('serious');
     expect(c.downsides.find((d) => d.id === 'time')?.severity).toBe('serious');
     expect(c.recommendation).toMatch(/^Impractical/);

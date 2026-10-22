@@ -64,6 +64,44 @@ session.tracked_params TEXT               -- JSON snapshot of the selection at s
 ```
 `config_change.changed_variable` becomes `param_key`. No other tables change.
 
+### R2.5 M0 probe results (SM-S921E, Snapdragon SM8650, Android 16 / One UI 8.5, build S921EXXS3CZG1)
+| Item | Result | Decision |
+|---|---|---|
+| `isPowerSaveMode` | readable (`true`) | auto ✔ (toggle detection is confirmed by M2 recorder logs) |
+| `isDataEnabled` / `isDataEnabledForReason(USER)` | readable with READ_PHONE_STATE | auto ✔ |
+| `getDataNetworkType` | `IWLAN` while Wi‑Fi calling is active | **not used** as radio evidence |
+| `TelephonyDisplayInfo` | `LTE` + override `NR_NSA` | **radio evidence source** (NR_NSA / NR_SA / LTE …) |
+| Power saving forcing 4G (C7) | not observed: NR_NSA shown with PS on | risk lowered; still flagged if seen |
+| `CHARGE_COUNTER` | 2 250 400 µAh at 57% → ≈3.95 Ah full | plausible µAh; candidate for the §7.6 trust check |
+| `CURRENT_NOW/AVERAGE` | −81 / −182 → **mA**, negative = discharging | store raw; unit decided per device from magnitude statistics |
+| `ENERGY_COUNTER` | unsupported | ignored |
+| `EXTRA_CYCLE_COUNT` | 0 | treated as unavailable |
+| Vendor extras | `hv_charger`, `protection`, `charge_type`, `charger_type`, `max_charging_current/voltage`, `misc_event`, `current_event`, `online` | recorded raw per sample as *evidence only* (never `verified`); interpretation validated during charging tests |
+| `activeModemCount` | 2 (dual SIM capable) | new auto parameter **`sim_count`** (active subscriptions) |
+| Supported refresh modes | max 60 Hz while PS on | motion smoothness *may* be inferable; to verify with PS off |
+| Battery optimisation | already ignoring (Unrestricted) | — |
+| Exit reasons | none | — |
+| Still open | broadcast rate; status codes while charging / Protect battery hold | captured automatically by the M2 recorder in real sessions |
+
+### R2.6 Live estimate in the notification (user request)
+The user wants to see the expected backup or charge time for the current configuration while a test runs. This is a deliberate, narrow exception to "native records facts, never computes results" (§3.1):
+- `LiveEstimator.kt` applies the §6 complete-step span rate to the **current uninterrupted run** only. A run restarts on a configuration change, pause/resume, direction change, jump or gap.
+- **Measured estimate:** rate %/h → time to the session's limit (target or threshold) and the clock time. It's labelled *Measuring* (0 steps), *Early estimate* (1–2 steps) or *Measured* (≥3 steps).
+- **Instant estimate:** charge counter ÷ average current (Samsung reports mA, R2.5) → time to the limit. It's labelled as swinging with current use. Shown in the app only. At the user's request, the notification shows just the expected time and the measured rate.
+- **Updates:** the notification is updated only at persisted samples. No timers or alarms are added. The elapsed time is drawn by the system chronometer, so it costs no app wakeups.
+- **Notification actions:** Pause/Resume and Log change.
+- These numbers are never stored and never used in results or comparisons. Those always come from the TS engine (M3+). Validated against the same worked example in `LiveEstimatorTest`.
+
+### R2.7 Visual style and test history (user request)
+- **Colours:** neutral white and grey surfaces (`#f5f5f7` page, `#ffffff` cards). The pink tint in the reference screenshots came from the phone's theme, so it is not used. Accents: Samsung blue `#4565bc` (accent, draining), green `#a4c852` (charging fill; `#5f8a1f` for text), neutral red `#c7323e` (errors, Stop), amber for warnings. Dark mode uses black and lighter tints.
+- **Finished tests:** the list shows "80% → 35% · took 3 h 05 m". Tapping a test opens a detail page with:
+  - the duration headline;
+  - active / interrupted / paused / unobserved time;
+  - an overall average rate, labelled as mixing any configurations used;
+  - the settings in force at the start, with source badges;
+  - a timeline of setting changes with times, offset from the start, source (automatic or logged by you) and the uncertainty window.
+- **Calculations** live in `src/engine/summary.ts` (pure, tested). Sessions recorded by the M2 recorder all have this data.
+
 ### R2.4 Execution order (unchanged milestones, adjusted contents)
 - **M0 + M1 now:** project skeleton, local Kotlin plugin, a capability probe screen (it runs on the S24 once you connect it), and the parameter catalogue + selection/cost panel as pure TS with unit tests.
 - M2 onward as planned. The recorder reads every `auto` parameter.

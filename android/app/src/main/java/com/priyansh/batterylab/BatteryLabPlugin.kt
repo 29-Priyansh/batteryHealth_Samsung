@@ -13,6 +13,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.os.Process
+import android.os.SystemClock
 import android.provider.Settings
 import android.telephony.TelephonyCallback
 import android.telephony.TelephonyDisplayInfo
@@ -26,6 +27,7 @@ import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
 import com.getcapacitor.annotation.Permission
 import com.getcapacitor.annotation.PermissionCallback
+import org.json.JSONObject
 import java.util.concurrent.Executors
 
 @CapacitorPlugin(
@@ -40,6 +42,152 @@ class BatteryLabPlugin : Plugin() {
     private val io = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
     private val db by lazy { LabDatabase.get(context) }
+
+    @Volatile private var visible = true
+    private val sampleListener: (JSObject) -> Unit = { msg -> if (visible) notifyListeners("sampleAdded", msg) }
+
+    override fun load() {
+        Recorder.init(context)
+        Recorder.listeners.add(sampleListener)
+        // If a session survived a process death without the service restarting, resume monitoring now.
+        Recorder.post { if (Recorder.hasActiveSession()) MonitorService.start(context) }
+    }
+
+    override fun handleOnPause() {
+        visible = false
+        Recorder.uiPausedElapsed = SystemClock.elapsedRealtime()
+        super.handleOnPause()
+    }
+
+    override fun handleOnResume() {
+        visible = true
+        super.handleOnResume()
+    }
+
+    override fun handleOnDestroy() {
+        Recorder.listeners.remove(sampleListener)
+        super.handleOnDestroy()
+    }
+
+    // ------------------------------------------------------------------ sessions (M2)
+
+    /** Runs [block] on the recorder thread and resolves with its result, or rejects with its error message. */
+    private fun onRecorder(call: PluginCall, block: () -> JSObject?) = Recorder.post {
+        try {
+            val result = block()
+            if (result == null) call.resolve() else call.resolve(result)
+        } catch (e: Throwable) {
+            call.reject(e.message ?: e.javaClass.simpleName)
+        }
+    }
+
+    @PluginMethod
+    fun getCurrentState(call: PluginCall) = onRecorder(call) {
+        val active = if (Recorder.hasActiveSession()) Recorder.activeSessionId() else null
+        val battery = Recorder.readBattery()
+        JSObject().apply {
+            put("battery", battery?.let {
+                JSObject().put("level", it.level).put("status", it.status).put("plugged", it.plugged)
+                    .put("tempC", it.tempDc / 10.0).put("voltageMv", it.voltageMv)
+            })
+            put("auto", JSObject().also { o -> AutoParams.read(context).forEach { (k, v) -> o.put(k, v ?: JSONObject.NULL) } })
+            put("radio", Recorder.currentRadio() ?: JSONObject.NULL)
+            put("activeSession", active?.let { Recorder.sessionJson(it) } ?: JSONObject.NULL)
+            put("activeValues", if (active != null) Recorder.currentValuesJson() else JSONObject.NULL)
+            put("live", Recorder.liveJson() ?: JSONObject.NULL)
+            put("counts", active?.let {
+                db.queryOne(
+                    "SELECT (SELECT COUNT(*) FROM sample WHERE session_id = ?1) AS samples, " +
+                        "(SELECT COUNT(*) FROM event WHERE session_id = ?1) AS events, " +
+                        "(SELECT COUNT(*) FROM config_change WHERE session_id = ?1) AS changes", it,
+                )
+            } ?: JSONObject.NULL)
+        }
+    }
+
+    @PluginMethod
+    fun startSession(call: PluginCall) {
+        val type = call.getString("type")
+        if (type != "charging" && type != "draining") return call.reject("type must be charging or draining")
+        val manualObj = call.getObject("manual", JSObject())!!
+        val manual = manualObj.keys().asSequence().associateWith { k -> manualObj.optString(k).takeIf { !manualObj.isNull(k) } }
+        val tracked = call.getArray("trackedParams")?.toList<String>() ?: emptyList()
+        onRecorder(call) {
+            Recorder.startSession(
+                type, call.getInt("target"), call.getInt("threshold"), manual, tracked,
+                call.getObject("conditions")?.toString(), call.getString("notes"),
+            ).also { MonitorService.start(context) }
+        }
+    }
+
+    @PluginMethod
+    fun pauseSession(call: PluginCall) = onRecorder(call) { Recorder.pause() }
+
+    @PluginMethod
+    fun setLimit(call: PluginCall) {
+        val value = call.getInt("value") ?: return call.reject("value required")
+        onRecorder(call) { Recorder.setLimit(value) }
+    }
+
+    @PluginMethod
+    fun resumeSession(call: PluginCall) = onRecorder(call) { Recorder.resume() }
+
+    @PluginMethod
+    fun stopSession(call: PluginCall) = onRecorder(call) {
+        Recorder.stop(payload = call.getObject("confirmations")?.let { JSONObject().put("confirmations", it) })
+    }
+
+    @PluginMethod
+    fun logChange(call: PluginCall) {
+        val key = call.getString("param") ?: return call.reject("param required")
+        val value = call.getString("value")
+        val windowStart = call.getLong("windowStartWall")
+        onRecorder(call) { Recorder.logChange(key, value, windowStart) }
+    }
+
+    @PluginMethod
+    fun listSessions(call: PluginCall) = onRecorder(call) {
+        JSObject().put("sessions", db.queryJson(
+            "SELECT s.*, (SELECT COUNT(*) FROM sample WHERE session_id = s.id) AS sample_count, " +
+                "(SELECT COUNT(*) FROM config_change WHERE session_id = s.id) AS change_count " +
+                "FROM session s ORDER BY start_wall DESC",
+        ))
+    }
+
+    @PluginMethod
+    fun getSessionData(call: PluginCall) {
+        val id = call.getString("id") ?: return call.reject("id required")
+        onRecorder(call) {
+            JSObject().apply {
+                put("session", db.queryOne("SELECT * FROM session WHERE id = ?", id) ?: error("Session not found"))
+                put("samples", db.queryJson("SELECT * FROM sample WHERE session_id = ? ORDER BY id", id))
+                put("events", db.queryJson("SELECT * FROM event WHERE session_id = ? ORDER BY id", id))
+                put("configStates", db.queryJson("SELECT * FROM config_state WHERE session_id = ? ORDER BY id", id))
+                put("paramValues", db.queryJson(
+                    "SELECT p.* FROM param_value p JOIN config_state c ON c.id = p.config_state_id WHERE c.session_id = ?", id,
+                ))
+                put("configChanges", db.queryJson("SELECT * FROM config_change WHERE session_id = ? ORDER BY id", id))
+                put("build", db.queryOne(
+                    "SELECT b.* FROM build_snapshot b JOIN session s ON s.build_snapshot_id = b.id WHERE s.id = ?", id,
+                ) ?: JSONObject.NULL)
+            }
+        }
+    }
+
+    @PluginMethod
+    fun deleteSession(call: PluginCall) {
+        val id = call.getString("id") ?: return call.reject("id required")
+        onRecorder(call) {
+            check(Recorder.activeSessionId() != id) { "Stop the session before deleting it" }
+            db.writableDatabase.delete("session", "id = ?", arrayOf(id))
+            null
+        }
+    }
+
+    @PluginMethod
+    fun getOverhead(call: PluginCall) = onRecorder(call) {
+        JSObject().put("days", db.queryJson("SELECT * FROM overhead_stat ORDER BY day DESC LIMIT 30"))
+    }
 
     // ------------------------------------------------------------------ probe (M0)
 
