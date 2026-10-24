@@ -335,3 +335,5 @@ code { font-size: 12px; background: var(--surface-2); border-radius: 6px; paddin
 .everyday .live-head { margin-top: 12px; }
 .tag.everyday { background: color-mix(in srgb, var(--green) 20%, transparent); color: var(--ok); }
 .session-icon.everyday { background: color-mix(in srgb, var(--green) 20%, transparent); color: var(--ok); }
+.auto-tag { display: inline-block; font-size: 10px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--ok); background: color-mix(in srgb, var(--green) 20%, transparent); border-radius: 6px; padding: 0 5px; margin-right: 6px; vertical-align: 1px; }

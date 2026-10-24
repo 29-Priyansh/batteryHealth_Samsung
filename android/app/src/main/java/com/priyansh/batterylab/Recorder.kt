@@ -34,6 +34,7 @@ object Recorder {
     private const val MANUAL_WINDOW_MAX_MS = 30 * 60_000L
     /** Plugged in but not charging this long during a charging test = held by battery protection. */
     private const val HELD_LIMIT_MS = 15 * 60_000L
+    private const val SWITCH_DEBOUNCE_MS = 60_000L
     private const val RESULTS_CHANNEL = "results"
     const val SETTING_ALWAYS_ON = "alwaysOn.enabled"
     const val SETTING_RESERVE = "alwaysOn.reserve"
@@ -75,6 +76,7 @@ object Recorder {
     private var statCpuNs = 0L
     private val live = LiveEstimator()
     private var heldSinceElapsed: Long? = null
+    private var switchSinceElapsed: Long? = null
     private var priorsCache: JSONObject? = null
 
     /** Elapsed time the UI last went to the background; bounds manual-change windows. */
@@ -131,7 +133,9 @@ object Recorder {
     fun startPassiveIfEnabled(): Boolean {
         if (active != null || restore() || !alwaysOnEnabled()) return active != null
         val battery = readBattery() ?: return false
-        open("draining", "passive", null, null, emptyMap(), AutoParams.KEYS, null, null, now(), battery)
+        // Automatic test in whichever direction the phone is going: plugged in = charging, else draining.
+        val type = if (battery.plugged != 0) "charging" else "draining"
+        open(type, "passive", null, null, emptyMap(), AutoParams.KEYS, null, null, now(), battery)
         return true
     }
 
@@ -145,7 +149,8 @@ object Recorder {
         return JSObject().put("enabled", enabled)
     }
 
-    fun alwaysOnEnabled(): Boolean = db.getSetting(SETTING_ALWAYS_ON) == "true"
+    /** On unless the user turned it off: automatic tests are the default way to collect data. */
+    fun alwaysOnEnabled(): Boolean = db.getSetting(SETTING_ALWAYS_ON) != "false"
 
     /** Called after the UI stores new history rates for the live estimate. */
     fun invalidatePriors() = post { priorsCache = null }
@@ -237,6 +242,7 @@ object Recorder {
         lastPersisted = null
         lastPersistClock = null
         heldSinceElapsed = null
+        switchSinceElapsed = null
         val row = sessionJson(s.id)
         // Tests that end on their own get a short result notification; a manual stop happens in the app.
         if (!s.passive && finalStatus != "stopped" && finalStatus != "superseded") notifyFinished(row)
@@ -439,10 +445,15 @@ object Recorder {
     private fun checkLimits(s: Active, r: BatteryReading, t: Clock) {
         if (active !== s || s.status != "active") return
         if (s.passive) {
-            // One everyday session per calendar day: each day is one independent sample (§R2.9).
-            val zone = java.time.ZoneId.systemDefault()
-            val day = { ms: Long -> java.time.Instant.ofEpochMilli(ms).atZone(zone).toLocalDate() }
-            if (day(t.wall) != day(s.startWall)) stop("rolled")
+            // One automatic test per charge or discharge cycle (each cycle is one sample, §R2.10).
+            // The plug state must hold for a minute, so a wiggled cable doesn't split the test.
+            val wanted = if (r.plugged != 0) "charging" else "draining"
+            if (wanted == s.type) {
+                switchSinceElapsed = null
+            } else {
+                val since = switchSinceElapsed ?: t.elapsed.also { switchSinceElapsed = it }
+                if (t.elapsed - since >= SWITCH_DEBOUNCE_MS) stop(if (wanted == "charging") "plugged_in" else "unplugged")
+            }
             return
         }
         val target = s.target
@@ -626,7 +637,7 @@ object Recorder {
         val dir = directionOf(r)
         val limit = limitOf(s, dir)
         val wanted = if (s.passive) dir else if (s.type == "charging") 1 else -1
-        val title = if (s.passive) "Always-on · ${r.level}%"
+        val title = if (s.passive) "Auto ${if (s.type == "charging") "charging" else "draining"} · ${r.level}%"
             else "${if (s.type == "charging") "Charging" else "Draining"} test · ${r.level}%"
         val lines = mutableListOf<String>()
         val text = when {

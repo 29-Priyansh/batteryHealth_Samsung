@@ -1,6 +1,6 @@
 // Always-on ("everyday") data (docs/PLAN.md R2.9). Kept apart from deliberate tests:
 // - configurations use only automatically read settings (manual ones would go stale unnoticed);
-// - each everyday session is one calendar day, the unit of replication;
+// - each everyday session (one automatic test per charge/discharge cycle) is the unit of replication;
 // - rates are split by screen state, because in everyday use screen-on time and activity
 //   dominate drain; screen-off (idle) rates are the controlled part used for comparisons;
 // - only recent days count, since ageing, updates and seasons shift the numbers.

@@ -130,14 +130,14 @@ function EverydayResults({ type, stats, selection }: { type: TestType; stats: Ev
   if (usable.length === 0) {
     return (
       <div class="card">
-        <p>No everyday data yet. Turn on <b>Always-on</b> on the Test tab; results build up from days of normal use
+        <p>No automatic test data yet. Keep <b>Automatic tests</b> on (Test tab); results build up from normal use
           (last 30 days count).</p>
       </div>
     );
   }
   return (
     <>
-      <p class="muted small">From normal use over the last 30 days, grouped by settings the app reads itself. Each day counts once.
+      <p class="muted small">From automatic tests over the last 30 days, grouped by settings the app reads itself. Each test counts once.
         {type === 'draining' && ' Screen-off is the fair comparison; screen-on depends mostly on what you do.'}</p>
       <ul class="results">
         {usable.map((st) => {
@@ -158,7 +158,7 @@ function EverydayResults({ type, stats, selection }: { type: TestType; stats: Ev
               ) : (
                 <div class="cc-stats"><div><b>{st.all.median!.toFixed(1)}</b><span class="muted small"> %/h median</span></div></div>
               )}
-              <div class="muted small">{st.days} day{st.days === 1 ? '' : 's'}</div>
+              <div class="muted small">{st.days} automatic test{st.days === 1 ? '' : 's'}</div>
               {type === 'draining' && idle && (
                 <div class="cc-predict">Idle {from}% → {to}% ≈ <b>{formatHours(idle.hours)}</b>
                   <span class="muted small"> predicted{idle.extrapolated ? ', partly extrapolated' : ''}</span></div>
@@ -176,7 +176,7 @@ function EverydayResults({ type, stats, selection }: { type: TestType; stats: Ev
         const b = type === 'draining' ? pair[1].off : pair[1].all;
         if (!a || !b) return <div class="card"><p class="muted">One of these has no {type === 'draining' ? 'screen-off ' : ''}data yet.</p></div>;
         return <ComparisonCard type={type} a={a} b={b} allConfigs={allConfigs}
-          note={type === 'draining' ? 'Compared on screen-off (idle) drain only; days count as tests.' : 'Days count as tests.'} />;
+          note={type === 'draining' ? 'Compared on screen-off (idle) drain only.' : undefined} />;
       })()}
     </>
   );

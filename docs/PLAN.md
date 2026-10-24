@@ -135,6 +135,17 @@ The user proposed recording all the time, splitting by configuration as settings
   - the UI's engine computes the history (median rate per configuration, last 30 days, tests and everyday, keyed by automatic settings) and stores it as the `priors` setting for the recorder.
 - **Always-on estimate limits:** the "reserve" level when on battery (default 20%) and the charge target (default 100%), set in Setup.
 
+### R2.10 Automatic tests per charge/discharge cycle (user request)
+- Always-on is **on by default**.
+- Instead of one record per day, it opens one automatic test per cycle:
+  - unplugged → `draining`;
+  - plugged in → `charging`.
+- A change of plug state must hold for 60 s before the test switches, so a wiggled cable doesn't split it. The test that ends gets status `plugged_in` or `unplugged`.
+- Automatic tests appear in Recent tests with an "Auto" label and "took X h", and use the normal detail page.
+- Each cycle is one sample in everyday results.
+- Samples in the opposite direction inside a cycle (e.g. during the debounce minute) still count toward that direction's everyday rates.
+- A manual test still supersedes automatic recording, which resumes afterwards.
+
 ### R2.4 Execution order (unchanged milestones, adjusted contents)
 - **M0 + M1 now:** project skeleton, local Kotlin plugin, a capability probe screen (it runs on the S24 once you connect it), and the parameter catalogue + selection/cost panel as pure TS with unit tests.
 - M2 onward as planned. The recorder reads every `auto` parameter.

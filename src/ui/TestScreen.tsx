@@ -100,7 +100,7 @@ export function TestScreen() {
             <StartForm act={act} battery={b} />
           </>}
 
-      <SessionList sessions={sessions.filter((x) => x.mode !== 'passive')} activeId={state.activeSession?.id} act={act}
+      <SessionList sessions={sessions} activeId={state.activeSession?.id} act={act}
         onChanged={() => void refresh()} />
       {openSession && (
         <SessionDetail id={openSession} canDelete={openSession !== state.activeSession?.id} act={act}
@@ -307,8 +307,8 @@ function EverydayCard({ state, act }: { state: CurrentState; act: Act }) {
     <div class={`card everyday ${running ? 'live' : ''}`}>
       <div class="switch-row">
         <div>
-          <h3>Always-on</h3>
-          <div class="muted small">Records everyday use between tests and learns each configuration's rate.</div>
+          <h3>Automatic tests</h3>
+          <div class="muted small">A draining test starts when you unplug and a charging test when you plug in. No need to start them yourself.</div>
         </div>
         <button role="switch" aria-checked={state.alwaysOn} class={`switch ${state.alwaysOn ? 'on' : ''}`} onClick={toggle}
           aria-label="Always-on recording"><span /></button>
@@ -317,17 +317,15 @@ function EverydayCard({ state, act }: { state: CurrentState; act: Act }) {
         <>
           <div class="live-head">
             <span class="dot live" />
-            <span class="muted small">Recording today since {fmtTime(Number(s.start_wall))}</span>
+            <span class="muted small">Auto {s.type} test since {fmtTime(Number(s.start_wall))} at {String(s.start_level)}%</span>
           </div>
           <LiveBlock live={state.live} type="draining" />
           {state.live?.config && <p class="muted small">Grouped by: {state.live.config || 'automatic settings'}</p>}
         </>
       )}
-      {state.alwaysOn && !running && <p class="muted small">Resumes when no test is running.</p>}
-      {!state.alwaysOn && (
-        <p class="muted small">Only settings the app reads itself are used here; screen-off and screen-on use are kept apart in Results.
-          A quiet notification stays while it runs.</p>
-      )}
+      {state.alwaysOn && !running && <p class="muted small">Resumes when your manual test ends.</p>}
+      <p class="muted small">Automatic tests group results by the settings the app reads itself, and keep screen-off and screen-on
+        use apart (Results → Everyday use). For 5G/4G or performance profile, start a manual test below.</p>
     </div>
   );
 }

@@ -23,7 +23,9 @@ const END_REASON: Record<string, string> = {
   target_reached: 'Reached the target',
   held_at_limit: 'Stopped charging below the target (battery protection)',
   rolled: 'Day finished (everyday recording continues in a new day)',
-  superseded: 'Paused while a test ran',
+  superseded: 'Stopped when you started a manual test',
+  plugged_in: 'Ended when the charger was connected',
+  unplugged: 'Ended when the charger was removed',
   threshold_reached: 'Reached the discharge level',
   stopped: 'Stopped by you',
   active: 'Still recording',
@@ -105,7 +107,8 @@ export function SessionDetail({ id, canDelete, act, onClose }: {
 
 function Detail({ data }: { data: SessionData }) {
   const s = data.session;
-  if (s.mode === 'passive') return <EverydayDetail data={data} />;
+  // Early always-on records covered a whole day in both directions; newer automatic tests are one direction.
+  if (s.mode === 'passive' && s.status === 'rolled') return <EverydayDetail data={data} />;
   const summary = summarize(s, data.samples, data.events);
   const start = startingValues(data.configStates, data.paramValues);
   const tracked: string[] = JSON.parse(String(s.tracked_params ?? '[]'));
@@ -117,6 +120,7 @@ function Detail({ data }: { data: SessionData }) {
       <div class={`card summary ${s.type}`}>
         <div class="live-head">
           <span class={`tag ${s.type}`}><Icon name={s.type === 'charging' ? 'bolt' : 'drain'} size={14} /> {s.type}</span>
+          {s.mode === 'passive' && <span class="auto-tag">Auto</span>}
           <span class="muted small">{fmtDateTime(Number(s.start_wall))}</span>
         </div>
         <Headline summary={summary} />
