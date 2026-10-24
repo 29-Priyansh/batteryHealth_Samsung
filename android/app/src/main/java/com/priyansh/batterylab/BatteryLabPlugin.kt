@@ -155,6 +155,10 @@ class BatteryLabPlugin : Plugin() {
         }
     }
 
+    /** Just the live estimate, for a cheap refresh while the screen is open. */
+    @PluginMethod
+    fun getLive(call: PluginCall) = onRecorder(call) { JSObject().put("live", Recorder.liveJson() ?: JSONObject.NULL) }
+
     @PluginMethod
     fun startSession(call: PluginCall) {
         val type = call.getString("type")

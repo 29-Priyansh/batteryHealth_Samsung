@@ -35,6 +35,9 @@ object Recorder {
     /** Plugged in but not charging this long during a charging test = held by battery protection. */
     private const val HELD_LIMIT_MS = 15 * 60_000L
     private const val SWITCH_DEBOUNCE_MS = 60_000L
+    /** "Now" refreshes the notification at most this often, and only on a noticeable change. */
+    private const val NOW_NOTIFY_MIN_MS = 15_000L
+    private const val NOW_NOTIFY_CHANGE = 0.05
     private const val RESULTS_CHANNEL = "results"
     const val SETTING_ALWAYS_ON = "alwaysOn.enabled"
     const val SETTING_RESERVE = "alwaysOn.reserve"
@@ -77,6 +80,12 @@ object Recorder {
     private val live = LiveEstimator()
     private var heldSinceElapsed: Long? = null
     private var switchSinceElapsed: Long? = null
+
+    // "Now" meter (screen on only) and the last screen-off period's idle drain (R2.11).
+    private val nowMeter = NowMeter()
+    private var lastNowNotify: Pair<Long, Double>? = null // elapsed, hours shown
+    private var screenOffMark: Triple<Int, Long, Int>? = null // charge counter, elapsed, boot
+    private var lastIdle: Pair<Double, Long>? = null // %/h while the screen was off, wall time it was measured
     private var priorsCache: JSONObject? = null
 
     /** Elapsed time the UI last went to the background; bounds manual-change windows. */
@@ -294,8 +303,47 @@ object Recorder {
         screenOn = on
         val s = active ?: return@measured
         val t = now()
+        val bm = app.getSystemService(BatteryManager::class.java)
+        val counter = validCounter(bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER))
+        nowMeter.reset()
+        lastNowNotify = null
+        if (!on) {
+            screenOffMark = counter?.let { Triple(it, t.elapsed, t.boot) }
+        } else {
+            // Idle drain while the screen was off, from two charge-counter readings: no polling needed.
+            val mark = screenOffMark
+            val level = readBattery()?.level
+            if (mark != null && counter != null && level != null && mark.third == t.boot) {
+                NowMeter.ratePerHour(mark.first, counter, t.elapsed - mark.second, level)?.let { lastIdle = it to t.wall }
+            }
+            screenOffMark = null
+        }
         db.tx { d -> insertEvent(d, s.id, t, if (on) "screen_on" else "screen_off", null) }
         readBattery()?.let { persist(it, if (on) "screen_on" else "screen_off", t) }
+    }
+
+    /** Called every few seconds while the screen is on: feeds the "now" meter, notifies on real changes. */
+    fun sampleNow() = measured {
+        val s = active ?: return@measured
+        if (screenOn != true || s.status != "active") return@measured
+        val raw = validCurrent(app.getSystemService(BatteryManager::class.java).getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW))
+            ?: return@measured
+        val t = now()
+        nowMeter.update(t.elapsed, raw)
+        val r = readBattery() ?: return@measured
+        val h = nowHours(s, r) ?: return@measured
+        val last = lastNowNotify
+        val changed = last == null || kotlin.math.abs(h - last.second) / last.second > NOW_NOTIFY_CHANGE
+        if (changed && (last == null || t.elapsed - last.first >= NOW_NOTIFY_MIN_MS)) {
+            lastNowNotify = t.elapsed to h
+            notify(s, r)
+        }
+    }
+
+    private fun nowHours(s: Active, r: BatteryReading): Double? {
+        val dir = directionOf(r)
+        val counter = validCounter(app.getSystemService(BatteryManager::class.java).getIntProperty(BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER))
+        return NowMeter.hours(counter, nowMeter.currentMa, r.level, limitOf(s, dir), dir)
     }
 
     fun onRadio(label: String) = measured {
@@ -648,14 +696,22 @@ object Recorder {
                 val rate = liveRate(dir)
                 val hours = hoursTo(r.level, limit, dir, rate)
                 val hasHistory = prior(dir) != null
-                if (hours != null) {
-                    lines += if (dir < 0) "Recharge around ${clockIn(hours)}" else "Reaches $limit% around ${clockIn(hours)}"
+                val now = if (screenOn == true) nowHours(s, r) else null
+                // The clock time follows the average: steadier than "now", which swings with use.
+                (hours ?: now)?.let {
+                    lines += if (dir < 0) "Recharge around ${clockIn(it)}" else "Reaches $limit% around ${clockIn(it)}"
+                }
+                val avg = when {
+                    rate == null || hours == null -> null
+                    live.steps < LiveEstimator.MIN_STEPS_MEASURED && !hasHistory -> "early ≈ ${duration(hours)}"
+                    else -> "avg ≈ ${duration(hours)}"
                 }
                 when {
-                    rate == null -> "Measuring… waiting for the next 1% change"
-                    hours == null -> "%.1f %%/h".format(rate)
-                    live.steps < LiveEstimator.MIN_STEPS_MEASURED && !hasHistory -> "Early estimate ≈ ${duration(hours)} to $limit%"
-                    else -> "≈ ${duration(hours)} to $limit% · " + "%.1f %%/h".format(rate)
+                    now != null && avg != null -> "Now ≈ ${duration(now)} · $avg to $limit%"
+                    now != null -> "Now ≈ ${duration(now)} to $limit%"
+                    avg != null -> "${avg.replaceFirstChar { it.uppercase() }} to $limit% · " + "%.1f %%/h".format(rate)
+                    rate != null -> "%.1f %%/h".format(rate)
+                    else -> "Measuring… waiting for the next 1% change"
                 }
             }
         }
@@ -735,6 +791,13 @@ object Recorder {
             put("hoursToLimit", hoursTo(r.level, limit, dir, rate) ?: JSONObject.NULL)
             put("measured", live.steps >= LiveEstimator.MIN_STEPS_MEASURED || p != null)
             put("historyRate", p?.first ?: JSONObject.NULL)
+            put("nowMa", nowMeter.currentMa ?: JSONObject.NULL)
+            put("nowHours", (if (screenOn == true) nowHours(s, r) else null) ?: JSONObject.NULL)
+            lastIdle?.let { (idleRate, at) ->
+                put("idleRatePerHour", idleRate)
+                put("idleHours", hoursTo(r.level, limitOf(s, -1), -1, idleRate) ?: JSONObject.NULL)
+                put("idleAtWall", at)
+            }
             put("historySteps", p?.second ?: 0)
             put("passive", s.passive)
             put("instantMa", instant?.first ?: JSONObject.NULL)

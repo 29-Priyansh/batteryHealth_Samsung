@@ -176,37 +176,61 @@ function ActiveSession({ state, act, logRequested }: { state: CurrentState; act:
   );
 }
 
-function LiveBlock({ live, type }: { live: LiveEstimate | null; type: TestType }) {
+/** How often the open screen refreshes the "now" meter (the WebView pauses in the background). */
+const LIVE_REFRESH_MS = 10_000;
+
+function LiveBlock({ live: initial, type }: { live: LiveEstimate | null; type: TestType }) {
   const [info, setInfo] = useState(false);
+  const [live, setLive] = useState(initial);
+  useEffect(() => setLive(initial), [initial]);
+  useEffect(() => {
+    const t = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void BatteryLab.getLive().then((r) => setLive(r.live)).catch(() => undefined);
+    }, LIVE_REFRESH_MS);
+    return () => clearInterval(t);
+  }, []);
+
   if (!live) return <div class="estimate"><div class="big">–</div></div>;
-  // Everyday recording follows whichever way the battery is going.
+  // Automatic tests follow whichever way the battery is going.
   const wanted = live.passive ? (live.direction || 1) : type === 'charging' ? 1 : -1;
   if (live.direction !== wanted) {
     return <div class="estimate"><div class="big muted">{live.passive ? 'Idle' : 'Not counted'}</div><div class="muted">{live.summary}</div></div>;
   }
-  type = wanted > 0 ? 'charging' : 'draining';
+  const charging = wanted > 0;
   const quality = live.ratePerHour == null ? 'measuring'
-    : live.steps >= 3 ? `measured · ${live.steps} steps`
-    : live.historyRate != null ? 'from your history'
+    : live.steps >= 3 ? `${live.steps} steps`
+    : live.historyRate != null ? 'from history'
     : `early · ${live.steps} step${live.steps === 1 ? '' : 's'}`;
+  const clockFrom = live.hoursToLimit ?? live.nowHours;
   return (
     <div class="estimate">
-      <div class="big-row">
-        <div class="big">{live.hoursToLimit != null ? formatHours(live.hoursToLimit) : live.ratePerHour == null ? 'Measuring…' : '–'}</div>
-        <span class={`badge ${live.measured ? 'auto' : 'manual'}`}>{quality}</span>
+      <div class="meters">
+        <div class="meter now">
+          <span class="meter-label">Now</span>
+          <div class="meter-value">{live.nowHours != null ? formatHours(live.nowHours) : '–'}</div>
+          <span class="muted small">{live.nowMa != null ? `${Math.round(live.nowMa)} mA ${charging ? 'in' : 'out'}` : 'reading…'}</span>
+        </div>
+        <div class="meter avg">
+          <span class="meter-label">Average</span>
+          <div class="meter-value">{live.hoursToLimit != null ? formatHours(live.hoursToLimit) : live.ratePerHour == null ? 'Measuring…' : '–'}</div>
+          <span class="muted small">{live.ratePerHour != null ? `${live.ratePerHour.toFixed(1)} %/h · ` : ''}{quality}</span>
+        </div>
       </div>
-      <div>{live.hoursToLimit != null
-        ? <>to {live.limit}% · {type === 'draining' ? 'recharge' : 'done'} around <b>{clockIn(live.hoursToLimit)}</b></>
-        : live.ratePerHour == null ? 'Waiting for the next 1% change' : ''}</div>
-      <div class="stat-row two">
-        <div><span class="muted small">Rate</span><b>{live.ratePerHour != null ? `${live.ratePerHour.toFixed(1)} %/h` : '–'}</b></div>
-        <div><span class="muted small">Instant · {live.instantMa ?? '–'} mA</span><b>{formatHours(live.instantHours)}</b></div>
+      <div class="meter-foot">
+        to {live.limit}%{clockFrom != null && <> · {charging ? 'done' : 'recharge'} around <b>{clockIn(clockFrom)}</b></>}
       </div>
+      {!charging && live.idleRatePerHour != null && (
+        <p class="idle-line">
+          Screen off{live.idleAtWall ? ` (until ${fmtTime(live.idleAtWall)})` : ''}: <b>{live.idleRatePerHour.toFixed(1)} %/h</b>
+          {live.idleHours != null && <> → ≈ {formatHours(live.idleHours)} to {live.limit}% if left idle</>}
+        </p>
+      )}
       <button class="link small" onClick={() => setInfo(!info)} aria-expanded={info}>ⓘ How these are estimated</button>
       {info && (
-        <p class="muted small">"Rate" comes from completed 1% steps in the current configuration; "Instant" comes from the current
-          draw right now and swings with use. Both assume nothing changes. When this configuration has history, "Rate" starts
-          from it{live.historyRate != null ? ` (${live.historyRate.toFixed(1)} %/h)` : ''} and shifts toward the current run as it collects 1% steps.</p>
+        <p class="muted small">"Now" is like a car's instant economy: the battery current over the last ~30 seconds, so it reacts to
+          what you're doing (screen, apps, 5G, heat-limited charging). "Average" comes from completed 1% steps in this configuration
+          {live.historyRate != null ? `, starting from its history (${live.historyRate.toFixed(1)} %/h)` : ''}. The clock time follows the average.
+          {charging && ' Above 80% charging slows down, so "now" assumes half the current for that part.'}</p>
       )}
     </div>
   );

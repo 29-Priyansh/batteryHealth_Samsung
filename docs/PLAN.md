@@ -146,6 +146,17 @@ The user proposed recording all the time, splitting by configuration as settings
 - Samples in the opposite direction inside a cycle (e.g. during the debounce minute) still count toward that direction's everyday rates.
 - A manual test still supersedes automatic recording, which resumes afterwards.
 
+### R2.11 "Now" meter (user request: car-style instant economy)
+- **"Now":** `CURRENT_NOW` (Samsung: mA, net battery current) smoothed with an exponential moving average (τ = 30 s), divided into the charge left, measured by the charge counter, to the session's limit.
+  - When charging past 80%, the remainder uses half the current, a conservative stand-in for the constant-voltage taper.
+  - It reacts to the screen, apps, the radio and heat-limited charging, because the battery current is the net of all of them.
+- **Cost control:** it only runs while the screen is on.
+  - A main-looper handler in the service reads the current every 5 s (about 1 ms each).
+  - The notification refreshes only when "now" changes by more than 5%, and at most every 15 s.
+  - With the screen off there is no polling. On unlock, the screen-off period's drain comes from the two charge-counter readings already taken at the screen events.
+  - The open screen refreshes every 10 s; the WebView pauses in the background.
+- **Display:** "Now" and "Average" side by side; the clock time follows the average. Never stored, never used in results.
+
 ### R2.4 Execution order (unchanged milestones, adjusted contents)
 - **M0 + M1 now:** project skeleton, local Kotlin plugin, a capability probe screen (it runs on the S24 once you connect it), and the parameter catalogue + selection/cost panel as pure TS with unit tests.
 - M2 onward as planned. The recorder reads every `auto` parameter.

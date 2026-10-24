@@ -56,6 +56,13 @@ export interface LiveEstimate {
   historyRate: number | null;
   historySteps: number;
   passive: boolean;
+  /** "Now" meter: battery current smoothed over ~30 s (screen on only) and the time it implies. */
+  nowMa: number | null;
+  nowHours: number | null;
+  /** Drain while the screen was last off, from two charge-counter readings. */
+  idleRatePerHour?: number;
+  idleHours?: number | null;
+  idleAtWall?: number;
   hoursToLimit: number | null;
   measured: boolean;
   instantMa: number | null;
@@ -96,6 +103,7 @@ export interface SampleAddedEvent {
 
 export interface BatteryLabPlugin {
   getCurrentState(): Promise<CurrentState>;
+  getLive(): Promise<{ live: LiveEstimate | null }>;
   startSession(options: StartSessionOptions): Promise<SessionRow>;
   pauseSession(): Promise<SessionRow>;
   /** Always-on everyday recording between tests. */

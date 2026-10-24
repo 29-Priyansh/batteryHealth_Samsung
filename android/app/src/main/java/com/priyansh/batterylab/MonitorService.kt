@@ -32,8 +32,8 @@ class MonitorService : Service() {
         override fun onReceive(c: Context, i: Intent) {
             when (i.action) {
                 Intent.ACTION_BATTERY_CHANGED -> Recorder.onBattery(i)
-                Intent.ACTION_SCREEN_ON -> Recorder.onScreen(true)
-                Intent.ACTION_SCREEN_OFF -> Recorder.onScreen(false)
+                Intent.ACTION_SCREEN_ON -> { Recorder.onScreen(true); startNowTicker() }
+                Intent.ACTION_SCREEN_OFF -> { Recorder.onScreen(false); stopNowTicker() }
                 PowerManager.ACTION_POWER_SAVE_MODE_CHANGED -> Recorder.onAutoParamSignal("broadcast")
                 WifiManager.WIFI_STATE_CHANGED_ACTION -> Recorder.onAutoParamSignal("broadcast")
                 LocationManager.MODE_CHANGED_ACTION -> Recorder.onAutoParamSignal("broadcast")
@@ -51,6 +51,22 @@ class MonitorService : Service() {
     }
 
     private var telephonyCallback: TelephonyCallback? = null
+
+    // "Now" meter ticker: runs only while the screen is on (R2.11); no alarms, no wakelocks.
+    private val ticker = android.os.Handler(android.os.Looper.getMainLooper())
+    private val tick = object : Runnable {
+        override fun run() {
+            Recorder.sampleNow()
+            ticker.postDelayed(this, NOW_TICK_MS)
+        }
+    }
+
+    private fun startNowTicker() {
+        ticker.removeCallbacks(tick)
+        ticker.post(tick)
+    }
+
+    private fun stopNowTicker() = ticker.removeCallbacks(tick)
 
     override fun onCreate() {
         super.onCreate()
@@ -70,6 +86,7 @@ class MonitorService : Service() {
         }
         ContextCompat.registerReceiver(this, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
         registerTelephony()
+        if (getSystemService(PowerManager::class.java).isInteractive) startNowTicker()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -91,6 +108,7 @@ class MonitorService : Service() {
     }
 
     override fun onDestroy() {
+        stopNowTicker()
         runCatching { unregisterReceiver(receiver) }
         telephonyCallback?.let { cb ->
             runCatching { getSystemService(TelephonyManager::class.java).unregisterTelephonyCallback(cb) }
@@ -181,6 +199,7 @@ class MonitorService : Service() {
     companion object {
         private const val CHANNEL_ID = "monitoring"
         private const val NOTIFICATION_ID = 1
+        private const val NOW_TICK_MS = 5_000L
         private const val ACTION_PAUSE = "com.priyansh.batterylab.PAUSE"
         private const val ACTION_RESUME = "com.priyansh.batterylab.RESUME"
 

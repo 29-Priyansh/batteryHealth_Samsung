@@ -337,3 +337,13 @@ code { font-size: 12px; background: var(--surface-2); border-radius: 6px; paddin
 .session-icon.everyday { background: color-mix(in srgb, var(--green) 20%, transparent); color: var(--ok); }
 .auto-tag { display: inline-block; font-size: 10px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase;
   color: var(--ok); background: color-mix(in srgb, var(--green) 20%, transparent); border-radius: 6px; padding: 0 5px; margin-right: 6px; vertical-align: 1px; }
+
+/* now / average meters */
+.meters { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0 8px; }
+.meter { background: var(--surface-2); border-radius: 16px; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.meter.now { background: var(--accent-soft); }
+.meter-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.meter.now .meter-label { color: var(--accent); }
+.meter-value { font-size: 26px; font-weight: 800; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.meter-foot { font-size: 14px; }
+.idle-line { font-size: 13px; margin: 8px 0 0; padding: 8px 10px; border-radius: 12px; background: var(--surface-2); }
